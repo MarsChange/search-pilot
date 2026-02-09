@@ -10,7 +10,7 @@ import os
 BROWSER_TOOLS = []
 SANDBOX_TOOLS = []
 WEBPAGE_ANALYZER_TOOLS = []
-GOOGLE_SEARCH_TOOLS = []
+SEARCH_ENGINE_TOOLS = []
 WIKI_SEARCH_TOOLS = []
 SCRAPE_WEBSITE_TOOLS = []
 
@@ -38,13 +38,13 @@ if os.getenv("E2B_API_KEY"):
         logging.warning(f"Sandbox tools unavailable (missing dependency): {e}")
         SANDBOX_TOOLS = []
 
-# Load Google search tools if SERPAPI_API_KEY is configured
+# Load search tools if SERPAPI_API_KEY is configured
 if os.getenv("SERPAPI_API_KEY"):
     try:
-        from tools.google_search import GOOGLE_SEARCH_TOOLS
+        from tools.search_engine import SEARCH_ENGINE_TOOLS
     except ImportError as e:
-        logging.warning(f"Google search tools unavailable (missing dependency): {e}")
-        GOOGLE_SEARCH_TOOLS = []
+        logging.warning(f"Search tools unavailable (missing dependency): {e}")
+        SEARCH_ENGINE_TOOLS = []
 
 # Wiki search tools (no API key required, uses public Wikipedia API)
 try:
@@ -66,14 +66,14 @@ TOOLS = [
     *BROWSER_TOOLS,
     *WEBPAGE_ANALYZER_TOOLS,
     *SANDBOX_TOOLS,
-    *GOOGLE_SEARCH_TOOLS,
+    *SEARCH_ENGINE_TOOLS,
     *WIKI_SEARCH_TOOLS,
     *SCRAPE_WEBSITE_TOOLS,
 ]
 
 # Sub-agent gets search/scrape/analyze/browser tools
 SUB_AGENT_TOOLS = [
-    *GOOGLE_SEARCH_TOOLS,
+    *SEARCH_ENGINE_TOOLS,
     *WIKI_SEARCH_TOOLS,
     *SCRAPE_WEBSITE_TOOLS,
     *WEBPAGE_ANALYZER_TOOLS,
@@ -88,7 +88,7 @@ __all__ = [
     "BROWSER_TOOLS",
     "WEBPAGE_ANALYZER_TOOLS",
     "SANDBOX_TOOLS",
-    "GOOGLE_SEARCH_TOOLS",
+    "SEARCH_ENGINE_TOOLS",
     "WIKI_SEARCH_TOOLS",
     "SCRAPE_WEBSITE_TOOLS",
     "SUB_AGENT_TOOLS",

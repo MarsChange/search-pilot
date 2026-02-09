@@ -33,7 +33,7 @@ def build_tool_functions_prompt(tool_functions: list) -> str:
             category = "browser"
         elif name == "analyze_webpage":
             category = "webpage_analyzer"
-        elif name == "google_search":
+        elif name == "search_engine":
             category = "search"
         elif name.startswith("search_wikipedia") or name == "list_wikipedia_revisions":
             category = "wiki"
@@ -50,8 +50,8 @@ def build_tool_functions_prompt(tool_functions: list) -> str:
     lines.append("")
 
     if "search" in categories:
-        lines.append("**Google Search** (`google_search`):")
-        lines.append("- Search the web using Google. Returns titles, URLs, snippets, answer boxes, and knowledge graphs.")
+        lines.append("**Google/Bing Search** (`search_engine`):")
+        lines.append("- Search the web using Google or Bing. Returns titles, URLs, snippets, answer boxes, and knowledge graphs.")
         lines.append("- Use Chinese keywords for Chinese questions, English for English questions.")
         lines.append("- Craft SHORT queries: 3-7 discriminative keywords targeting ONE specific aspect.")
         lines.append("")
@@ -215,7 +215,7 @@ Be cautious and transparent in your output:
 **For any research subtask, follow this search→analyze pipeline:**
 
 ## Phase 1: Search
-- Use `google_search` to find relevant sources
+- Use `search_engine` to find relevant sources
 - Craft SHORT queries (3-7 keywords) targeting the specific subtask
 - Each new query MUST be substantially different from all previous queries — never repeat or accumulate keywords
 - For each aspect, perform at most 2-3 searches before moving to Phase 2

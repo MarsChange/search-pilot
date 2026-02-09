@@ -1,5 +1,5 @@
 """
-Google Search tool using SerpAPI.
+Google/Bing Search tool using SerpAPI.
 
 Requires SERPAPI_API_KEY environment variable.
 """
@@ -11,13 +11,13 @@ from typing import Optional
 import requests
 
 
-def google_search(
+def search_engine(
     query: str,
     num_results: int = 20,
     language: str = "en",
 ) -> str:
     """
-    Search the web using Google via SerpAPI. Returns formatted search results including titles, URLs, snippets, answer boxes, and knowledge graph data.
+    Search the web using Google or Bing via SerpAPI. Returns formatted search results including titles, URLs, snippets, answer boxes, and knowledge graph data.
 
     Args:
         query: The search query string (use Chinese keywords for Chinese questions, English for English questions).
@@ -32,7 +32,7 @@ def google_search(
         return "Error: SERPAPI_API_KEY environment variable is not set"
 
     params = {
-        "engine": "google",
+        "engine": os.getenv("SERPAPI_ENGINE", "google"),  # "google" or "bing"
         "q": query,
         "api_key": api_key,
         "num": num_results,
@@ -110,6 +110,6 @@ def google_search(
         return "Error: Failed to parse API response"
 
 
-GOOGLE_SEARCH_TOOLS = []
+SEARCH_ENGINE_TOOLS = []
 if os.getenv("SERPAPI_API_KEY"):
-    GOOGLE_SEARCH_TOOLS = [google_search]
+    SEARCH_ENGINE_TOOLS = [search_engine]

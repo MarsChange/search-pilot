@@ -52,7 +52,7 @@ async def analyze_webpage(url: str, question: str) -> str:
     1. Fetches the webpage content using Jina Reader (with fallback)
     2. Analyzes the content with AI to extract relevant information
 
-    Use this tool after getting search results from google-search to deeply
+    Use this tool after getting search results from search_engine to deeply
     analyze specific web pages. Call this tool for each relevant URL.
 
     Args:

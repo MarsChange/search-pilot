@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # --- Constants ---
 
 # Tool names that count as "search" for the SearchLoopGuard
-SEARCH_TOOL_NAMES = {"google_search", "search_wikipedia", "search_wikipedia_revision", "list_wikipedia_revisions"}
+SEARCH_TOOL_NAMES = {"search_engine", "search_wikipedia", "search_wikipedia_revision", "list_wikipedia_revisions"}
 MAX_MAIN_AGENT_TURNS = 30
 MAX_SUB_AGENT_TURNS = 25
 
@@ -86,14 +86,14 @@ Do NOT attempt to guess or infer correct answers, as complete factual informatio
 
 可用的搜索和分析工具：
 
-- **google_search 工具**：使用 Google 搜索网页，返回标题、URL 和摘要列表。适用于中英文关键词搜索。
+- **search_engine 工具**：基于SERPAPI，使用 Google/Bing 等搜索引擎搜索网页，返回标题、URL 和摘要列表。适用于中英文关键词搜索。
 - **analyze_webpage 工具**：输入 URL 和问题，自动读取网页内容并提取相关信息。搜索后必须用此工具分析搜索结果中的网页。
 - **scrape_website 工具**：直接抓取网页内容并转换为 markdown 格式。
 - **search_wikipedia 工具**：搜索 Wikipedia 页面内容。
 - **search_wikipedia_revision 工具**：获取 Wikipedia 页面的历史版本内容。
 - **list_wikipedia_revisions 工具**：列出 Wikipedia 页面的可用历史版本。
 
-建议的工作流程：google_search 搜索 → 选择最相关的 URL → analyze_webpage 逐个分析网页 → 综合信息得出答案。
+建议的工作流程：search_engine 搜索 → 选择最相关的 URL → analyze_webpage 逐个分析网页 → 综合信息得出答案。
 
 Here is the question:
 
