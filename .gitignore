@@ -1,5 +1,5 @@
 .env
 test
-
+CLAUDE.md
 __pycache__
 ./**/__pycache__/

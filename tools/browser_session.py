@@ -104,8 +104,6 @@ class PlaywrightMCPSession:
 
 
 # ============== Tool Functions ==============
-
-
 async def browser_navigate(url: str) -> str:
     """
     Navigate to a URL in the browser.

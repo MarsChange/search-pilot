@@ -10,9 +10,9 @@ from pydantic import BaseModel, ConfigDict
 
 # Try to import tools, fallback to empty list if not available
 try:
-    from tools import TOOLS
+    from tools import MAIN_AGENT_TOOLS
 except ImportError:
-    TOOLS = []
+    MAIN_AGENT_TOOLS = []
 
 app = FastAPI()
 
@@ -69,7 +69,7 @@ async def query(req: QueryRequest) -> QueryResponse:
     result = ""
 
     # Return messages after the last tool call message as the final answer
-    async for chunk in agent_loop(req.to_messages(), TOOLS):
+    async for chunk in agent_loop(req.to_messages(), MAIN_AGENT_TOOLS):
         if chunk.type == "tool_call" or chunk.type == "tool_call_result":
             result = ""
         elif chunk.type == "text" and chunk.content:
@@ -111,7 +111,7 @@ async def stream(req: QueryRequest) -> StreamingResponse:
     """
 
     async def stream_response():
-        async for chunk in agent_loop(req.to_messages(), TOOLS):
+        async for chunk in agent_loop(req.to_messages(), MAIN_AGENT_TOOLS):
             if chunk.type == "text" and chunk.content:
                 data = {
                     "answer": chunk.content,
@@ -136,7 +136,7 @@ async def ag_ui(run_agent_input: RunAgentInput) -> StreamingResponse:
 
     async def stream_response():
         async for event in stream_agui_events(
-            chunks=agent_loop(messages, TOOLS), run_agent_input=run_agent_input
+            chunks=agent_loop(messages, MAIN_AGENT_TOOLS), run_agent_input=run_agent_input
         ):
             yield to_sse_data(event)
 
