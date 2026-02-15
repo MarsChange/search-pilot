@@ -51,7 +51,7 @@ def _scrape_by_jina(url: str) -> tuple[Optional[str], Optional[str]]:
 
     try:
         logger.info(f"Jina scraping: {url}")
-        response = requests.get(jina_url, headers=jina_headers, timeout=120)
+        response = requests.get(jina_url, headers=jina_headers, timeout=30)
 
         if response.status_code == 422:
             return None, "Jina 422: URL may point to a file, not supported"
@@ -62,7 +62,7 @@ def _scrape_by_jina(url: str) -> tuple[Optional[str], Optional[str]]:
         # Jina sometimes returns a partial page; retry once with longer timeout
         if "Warning: This page maybe not yet fully loaded" in content:
             logger.info(f"Jina: page not fully loaded, retrying: {url}")
-            response = requests.get(jina_url, headers=jina_headers, timeout=300)
+            response = requests.get(jina_url, headers=jina_headers, timeout=60)
             response.raise_for_status()
             content = response.text
 
@@ -78,7 +78,7 @@ def _scrape_by_jina(url: str) -> tuple[Optional[str], Optional[str]]:
     except requests.exceptions.HTTPError as e:
         return None, f"Jina HTTP error: {e}"
     except requests.exceptions.Timeout:
-        return None, f"Jina request timed out (120s) for {url}"
+        return None, f"Jina request timed out (30s) for {url}"
     except Exception as e:
         return None, f"Jina scraping failed: {e}"
 

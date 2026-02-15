@@ -354,20 +354,23 @@ async def run_sub_agent(
             break
 
         # Build assistant message for history
-        assistant_msg = {
-            "role": "assistant",
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in assistant_message.tool_calls
-            ],
-        }
+        tool_calls_data = []
+        for tc in assistant_message.tool_calls:
+            args_str = tc.function.arguments
+            # Ensure arguments is valid JSON for DashScope API compatibility
+            try:
+                json.loads(args_str)
+            except (json.JSONDecodeError, TypeError):
+                args_str = json.dumps({})
+            tool_calls_data.append({
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": args_str,
+                },
+            })
+        assistant_msg = {"role": "assistant", "tool_calls": tool_calls_data}
         if assistant_message.content:
             assistant_msg["content"] = assistant_message.content
         messages.append(assistant_msg)
@@ -384,14 +387,14 @@ async def run_sub_agent(
                 )
                 continue
 
-            # Execute the tool
+            # Execute the tool (sync tools run in thread to avoid blocking event loop)
             try:
                 if func_name in tool_functions_map:
                     func = tool_functions_map[func_name]
                     if iscoroutinefunction(func):
                         result = await func(**parsed_args)
                     else:
-                        result = func(**parsed_args)
+                        result = await asyncio.to_thread(func, **parsed_args)
                     tool_result = str(result)
                 else:
                     tool_result = f"Error: Tool '{func_name}' not found."
@@ -486,9 +489,10 @@ async def agent_loop(
     # and the client won't idle-timeout during Phase 0 pre-analysis
     yield Chunk(type="text", content="", step_index=0)
 
-    # --- Phase 0: Question Pre-Analysis ---
+    # --- Phase 0: Question Pre-Analysis (optional, controlled by ENABLE_QUESTION_ANALYSIS) ---
     question_analysis = ""
-    if user_question:
+    enable_analysis = os.getenv("ENABLE_QUESTION_ANALYSIS", "true").lower() in ("true", "1", "yes")
+    if enable_analysis and user_question:
         try:
             analysis_task = asyncio.create_task(
                 client.chat.completions.create(
@@ -503,22 +507,13 @@ async def agent_loop(
             )
             # Wait with periodic keepalive to prevent SSE timeout
             pending = {analysis_task}
-            elapsed = 0
             while pending:
                 _, pending = await asyncio.wait(pending, timeout=30)
-                elapsed += 30
                 if pending:
-                    if elapsed >= 50:
-                        analysis_task.cancel()
-                        logger.warning(
-                            "Phase 0 question pre-analysis timed out (50s), skipping"
-                        )
-                        break
                     yield Chunk(type="text", content="", step_index=0)
 
-            if analysis_task.done() and not analysis_task.cancelled():
-                analysis_response = analysis_task.result()
-                question_analysis = analysis_response.choices[0].message.content or ""
+            analysis_response = analysis_task.result()
+            question_analysis = analysis_response.choices[0].message.content or ""
         except Exception as e:
             logger.warning(f"Phase 0 question pre-analysis failed: {e}, skipping")
 
@@ -750,10 +745,10 @@ async def agent_loop(
             if iscoroutinefunction(func):
                 async_tasks[call_id] = asyncio.create_task(func(**parsed_args))
             else:
-                try:
-                    sync_results[call_id] = str(func(**parsed_args))
-                except Exception as e:
-                    sync_results[call_id] = f"Error: Execution failed - {str(e)}"
+                # Run sync tools in thread to avoid blocking event loop
+                async_tasks[call_id] = asyncio.create_task(
+                    asyncio.to_thread(func, **parsed_args)
+                )
 
         # Wait for all async tasks with periodic keepalive
         if async_tasks:

@@ -14,6 +14,7 @@ Environment variables:
 - JINA_READER_URL: Jina Reader URL (optional, defaults to https://r.jina.ai)
 """
 
+import asyncio
 import logging
 import os
 from typing import Optional
@@ -63,7 +64,7 @@ async def analyze_webpage(url: str, question: str) -> str:
         Analysis report with relevance assessment, key findings, and extracted details
     """
     # Step 1: Fetch webpage content
-    content, error = _fetch_content(url)
+    content, error = await _fetch_content(url)
     if error:
         return f"**Failed to fetch page**: {error}\n\nURL: {url}"
 
@@ -80,12 +81,12 @@ async def analyze_webpage(url: str, question: str) -> str:
     return analysis
 
 
-def _fetch_content(url: str) -> tuple[Optional[str], Optional[str]]:
-    """Fetch webpage content using scrape_website tool."""
+async def _fetch_content(url: str) -> tuple[Optional[str], Optional[str]]:
+    """Fetch webpage content using scrape_website tool (runs in thread to avoid blocking)."""
     from tools.scrape_website import scrape_website
 
     try:
-        result = scrape_website(url)
+        result = await asyncio.to_thread(scrape_website, url)
         if result.startswith("Error:"):
             return None, result
         return result, None
