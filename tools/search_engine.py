@@ -1,12 +1,11 @@
 """
-Google/Bing Search tool using SerpAPI.
+Google Search tool using Serper API.
 
-Requires SERPAPI_API_KEY environment variable.
+Requires SERPER_API_KEY environment variable.
 """
 
 import json
 import os
-from typing import Optional
 
 import requests
 
@@ -17,7 +16,7 @@ def search_engine(
     language: str = "en",
 ) -> str:
     """
-    Search the web using Google or Bing via SerpAPI. Returns formatted search results including titles, URLs, snippets, answer boxes, and knowledge graph data.
+    Search the web using Google via Serper API. Returns formatted search results including titles, URLs, snippets, answer boxes, and knowledge graph data.
 
     Args:
         query: The search query string (use Chinese keywords for Chinese questions, English for English questions).
@@ -27,22 +26,26 @@ def search_engine(
     Returns:
         Formatted search results text with titles, URLs, and snippets.
     """
-    api_key = os.getenv("SERPAPI_API_KEY")
+    api_key = os.getenv("SERPER_API_KEY")
     if not api_key:
-        return "Error: SERPAPI_API_KEY environment variable is not set"
+        return "Error: SERPER_API_KEY environment variable is not set"
 
-    params = {
-        "engine": os.getenv("SERPAPI_ENGINE", "google"),  # "google" or "bing"
+    payload = {
         "q": query,
-        "api_key": api_key,
         "num": num_results,
         "hl": language,
     }
 
+    headers = {
+        "X-API-KEY": api_key,
+        "Content-Type": "application/json",
+    }
+
     try:
-        response = requests.get(
-            "https://serpapi.com/search",
-            params=params,
+        response = requests.post(
+            "https://google.serper.dev/search",
+            headers=headers,
+            json=payload,
             timeout=30,
         )
         response.raise_for_status()
@@ -50,7 +53,7 @@ def search_engine(
 
         # Extract organic search results
         results = []
-        organic_results = data.get("organic_results", [])
+        organic_results = data.get("organic", [])
 
         for item in organic_results[:num_results]:
             result = {
@@ -63,8 +66,8 @@ def search_engine(
             results.append(result)
 
         # Include answer box if available
-        answer_box = data.get("answer_box")
-        knowledge_graph = data.get("knowledge_graph")
+        answer_box = data.get("answerBox")
+        knowledge_graph = data.get("knowledgeGraph")
 
         # Format results for display
         lines = []
@@ -111,5 +114,5 @@ def search_engine(
 
 
 SEARCH_ENGINE_TOOLS = []
-if os.getenv("SERPAPI_API_KEY"):
+if os.getenv("SERPER_API_KEY"):
     SEARCH_ENGINE_TOOLS = [search_engine]

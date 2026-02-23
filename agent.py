@@ -118,7 +118,8 @@ async def stream(req: QueryRequest) -> StreamingResponse:
                 }
                 yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
             elif chunk.type == "text" and chunk.content == "":
-                yield ": keepalive\n\n"
+                # Send actual SSE data event (not comment) to keep connection alive.
+                yield 'data: {"answer": ""}\n\n'
 
     return StreamingResponse(
         stream_response(),

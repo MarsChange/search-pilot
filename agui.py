@@ -60,7 +60,9 @@ def to_openai_messages(messages: List[Message]) -> List[Dict[str, Any]]:
     return openai_messages
 
 
-KEEPALIVE_SSE = ": keepalive\n\n"
+# Keepalive as actual SSE data event (not comment).
+# Alibaba Cloud proxy only counts "data:" events as activity.
+KEEPALIVE_SSE = "data: \n\n"
 
 
 async def stream_agui_events(

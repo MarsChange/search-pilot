@@ -38,8 +38,8 @@ if os.getenv("E2B_API_KEY"):
         logging.warning(f"Sandbox tools unavailable (missing dependency): {e}")
         SANDBOX_TOOLS = []
 
-# Load search tools if SERPAPI_API_KEY is configured
-if os.getenv("SERPAPI_API_KEY"):
+# Load search tools if SERPER_API_KEY is configured
+if os.getenv("SERPER_API_KEY"):
     try:
         from tools.search_engine import SEARCH_ENGINE_TOOLS
     except ImportError as e:

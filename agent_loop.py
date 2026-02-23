@@ -508,7 +508,7 @@ async def agent_loop(
             # Wait with periodic keepalive to prevent SSE timeout
             pending = {analysis_task}
             while pending:
-                _, pending = await asyncio.wait(pending, timeout=30)
+                _, pending = await asyncio.wait(pending, timeout=15)
                 if pending:
                     yield Chunk(type="text", content="", step_index=0)
 
@@ -754,7 +754,7 @@ async def agent_loop(
         if async_tasks:
             pending = set(async_tasks.values())
             while pending:
-                _, pending = await asyncio.wait(pending, timeout=30)
+                _, pending = await asyncio.wait(pending, timeout=15)
                 if pending:
                     yield Chunk(
                         type="text", content="", step_index=step_index
