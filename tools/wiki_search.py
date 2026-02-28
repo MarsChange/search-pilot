@@ -10,7 +10,6 @@ Falls back to Jina Reader when Wikipedia API is inaccessible (e.g. from China).
 import os
 import re
 import logging
-import threading
 from contextlib import contextmanager
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -23,46 +22,71 @@ logger = logging.getLogger(__name__)
 # Set a proper User-Agent to avoid being blocked by Wikipedia API
 wikipedia.set_user_agent("TianchiAgent/1.0 (Research Bot; Python/wikipedia)")
 
-# Wikipedia language configuration
+# Wikipedia configuration — always use English Wikipedia
 _EN_API_URL = "https://en.wikipedia.org/w/api.php"
-_ZH_API_URL = "https://zh.wikipedia.org/w/api.php"
-_wiki_api_lock = threading.Lock()
+_EN_DOMAIN = "en.wikipedia.org"
 
-
-def _contains_cjk(text: str) -> bool:
-    """Check if text contains CJK (Chinese/Japanese/Korean) characters."""
-    for char in text:
-        if '\u4e00' <= char <= '\u9fff' or '\u3400' <= char <= '\u4dbf':
-            return True
-    return False
-
-
-def _get_wiki_domain(entity: str) -> str:
-    """Return the appropriate Wikipedia domain based on entity language."""
-    return "zh.wikipedia.org" if _contains_cjk(entity) else "en.wikipedia.org"
+# Set default API URL
+wiki_internal.API_URL = _EN_API_URL
 
 
 @contextmanager
 def _wiki_lang(entity: str):
-    """Context manager to temporarily set Wikipedia API URL based on entity language.
-
-    Thread-safe: uses a lock to prevent concurrent API_URL modifications.
-    """
-    is_cjk = _contains_cjk(entity)
-    api_url = _ZH_API_URL if is_cjk else _EN_API_URL
-    domain = "zh.wikipedia.org" if is_cjk else "en.wikipedia.org"
-    with _wiki_api_lock:
-        old_url = wiki_internal.API_URL
-        wiki_internal.API_URL = api_url
-        try:
-            yield domain
-        finally:
-            wiki_internal.API_URL = old_url
+    """Context manager that yields the Wikipedia domain (always English)."""
+    yield _EN_DOMAIN
 
 
 # Jina fallback configuration
 _JINA_API_KEY = os.getenv("JINA_API_KEY", "")
 _JINA_READER_URL = os.getenv("JINA_READER_URL", "https://r.jina.ai")
+
+
+def _clean_jina_wikipedia(text: str) -> str:
+    """Remove Wikipedia-specific noise from Jina Reader markdown output."""
+    # Remove Jina metadata header lines (Title:, URL Source:, Published Time:, Markdown Content:)
+    text = re.sub(r'^Title:.*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^URL Source:.*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^Published Time:.*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^Markdown Content:.*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^From Wikipedia, the free encyclopedia\s*$', '', text, flags=re.MULTILINE)
+
+    # Remove image links: [![...](image_url)](page_url) or ![...](url)
+    text = re.sub(r'\[!\[.*?\]\(.*?\)\]\(.*?\)', '', text)
+    text = re.sub(r'!\[.*?\]\(.*?\)', '', text)
+
+    # Remove [edit] section links
+    text = re.sub(r'\[edit\]\(https?://[^\)]*\)', '', text)
+    text = re.sub(r'\[\[edit\]\(https?://[^\)]*\)\]', '', text)
+
+    # Remove citation references like [[1]](url), [[2]](url)
+    text = re.sub(r'\[\[\d+\]\]\(https?://[^\)]*\)', '', text)
+
+    # Remove inline Wikipedia links but keep display text: [text](https://...wikipedia.org/...)
+    text = re.sub(r'\[([^\[\]]+)\]\(https?://[a-z]{2,3}\.wikipedia\.org/[^\)]*\)', r'\1', text)
+
+    # Remove any remaining Wikipedia links (other formats)
+    text = re.sub(r'\[([^\[\]]+)\]\(https?://[^\)]*wikipedia[^\)]*\)', r'\1', text)
+
+    # Remove markdown table separators: | --- | --- |
+    text = re.sub(r'^\|[\s\-\|:]+\|$', '', text, flags=re.MULTILINE)
+
+    # Clean up excessive pipe-delimited table rows that are just formatting noise
+    # Keep rows that have actual content between pipes
+    text = re.sub(r'^\|\s*\|\s*$', '', text, flags=re.MULTILINE)
+
+    # Remove "See also", "References", "External links", "Further reading" sections and everything after
+    text = re.sub(
+        r'\n(?:See also|References|External links|Further reading|Notes|Citations|Bibliography)\s*\n[-=]*\n.*',
+        '', text, flags=re.DOTALL | re.IGNORECASE
+    )
+
+    # Remove multi-language Wikipedia link blocks at the end (lines with just language links)
+    text = re.sub(r'\n\s*\*?\s*\[?https?://[a-z]{2,3}\.wikipedia\.org/[^\n]*', '', text)
+
+    # Clean up excessive blank lines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    return text.strip()
 
 
 def _jina_fallback(entity: str, domain: str = "") -> str:
@@ -71,7 +95,7 @@ def _jina_fallback(entity: str, domain: str = "") -> str:
         logger.warning("Jina fallback skipped: JINA_API_KEY not set")
         return ""
     if not domain:
-        domain = _get_wiki_domain(entity)
+        domain = _EN_DOMAIN
     wiki_url = f"https://{domain}/wiki/{entity.replace(' ', '_')}"
     jina_url = f"{_JINA_READER_URL}/{wiki_url}"
     headers = {
@@ -82,7 +106,7 @@ def _jina_fallback(entity: str, domain: str = "") -> str:
         logger.info(f"Wikipedia API failed, trying Jina fallback for '{entity}'")
         resp = requests.get(jina_url, headers=headers, timeout=30)
         if resp.status_code == 200 and len(resp.text.strip()) > 50:
-            content = resp.text.strip()
+            content = _clean_jina_wikipedia(resp.text.strip())
             return (
                 f"Page Title: {entity}\n\n"
                 f"Content (via Jina fallback):\n{content[:50000]}\n\n"

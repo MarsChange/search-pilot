@@ -321,7 +321,15 @@ def generate_summarize_prompt(
             "If a clear answer was identified during the research, extract it directly.\n"
             "If a definitive answer could not be determined, make a well-informed educated guess "
             "based on all gathered information.\n\n"
-            "Your response MUST be a JSON dictionary with the answer:\n"
+            "## IMPORTANT: Answer Formatting Rules\n\n"
+            "1. **Use canonical/primary names**: When the answer involves a person, place, or entity, "
+            "always output their most widely recognized primary name — NOT aliases, birth names, or alternative spellings.\n"
+            "2. **Match the question's framing**: If the question references an entity by a specific name, "
+            "use that same name form in your answer when possible.\n"
+            "3. **Numerical answers must be integers** unless the question explicitly involves decimals.\n"
+            "4. **Lowercase**: Convert all English letters in the answer to lowercase.\n"
+            "5. **Strip whitespace**: Remove any leading and trailing spaces from the answer.\n\n"
+            "## IMPORTANT: Your response MUST be a JSON dictionary with the answer:\n"
             '{"answer": "your final answer here"}\n'
         )
     else:
