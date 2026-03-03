@@ -83,15 +83,36 @@ async def stream_agui_events(
     try:
         async for chunk in chunks:
             if chunk.type == "text" and chunk.content:
-                # Start text message if not already started
-                if not text_message_started:
-                    yield TextMessageStartEvent(message_id=msg_id)
-                    text_message_started = True
-
-                yield TextMessageContentEvent(
-                    message_id=msg_id,
-                    delta=chunk.content,
+                # Check if this is a sub-agent progress message (🔍⚙️✅ prefixed)
+                is_progress = chunk.content and chunk.content.lstrip().startswith(
+                    ("🔍", "⚙️", "✅", "📊", "💬", "⏳", "⚠️")
                 )
+
+                if is_progress:
+                    # End any pending main text message first
+                    if text_message_started:
+                        yield TextMessageEndEvent(message_id=msg_id)
+                        text_message_started = False
+                        msg_id = str(uuid.uuid4())
+
+                    # Emit progress as its own self-contained message
+                    progress_msg_id = str(uuid.uuid4())
+                    yield TextMessageStartEvent(message_id=progress_msg_id)
+                    yield TextMessageContentEvent(
+                        message_id=progress_msg_id,
+                        delta=chunk.content,
+                    )
+                    yield TextMessageEndEvent(message_id=progress_msg_id)
+                else:
+                    # Normal text content — accumulate in current message
+                    if not text_message_started:
+                        yield TextMessageStartEvent(message_id=msg_id)
+                        text_message_started = True
+
+                    yield TextMessageContentEvent(
+                        message_id=msg_id,
+                        delta=chunk.content,
+                    )
 
             elif chunk.type == "text" and not chunk.content:
                 # Empty text chunk = keepalive signal from agent_loop

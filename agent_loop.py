@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # --- Constants ---
 
 MAX_MAIN_AGENT_TURNS = 30
-MAX_SUB_AGENT_TURNS = 25
+MAX_SUB_AGENT_TURNS = 10
 
 
 DEFAULT_SYSTEM_PROMPT = """You are an AI assistant designed to help with a variety of tasks. You have access to several tools that can assist you in providing accurate and relevant information.
@@ -232,6 +232,8 @@ async def run_sub_agent(
     subtask: str,
     sub_agent_tool_functions: list,
     chinese_context: bool = False,
+    progress_queue: Optional[asyncio.Queue] = None,
+    worker_index: int = 0,
 ) -> str:
     """Run the sub-agent worker to complete a research subtask.
 
@@ -243,10 +245,75 @@ async def run_sub_agent(
         subtask: The research subtask description
         sub_agent_tool_functions: Tool functions available to the sub-agent
         chinese_context: Whether CJK context is detected
+        progress_queue: Optional queue to push progress chunks for streaming
+        worker_index: Worker number for progress display
 
     Returns:
         Summary report string from the sub-agent
     """
+    async def _emit_progress(text: str):
+        """Push a progress message to the queue for streaming."""
+        if progress_queue is not None:
+            await progress_queue.put(text)
+
+    async def _llm_call_with_progress(coro, label: str):
+        """Run an LLM coroutine with a background progress emitter.
+
+        Spawns a separate task that emits ⏳ every 10s while the LLM call
+        is in progress. This avoids nested asyncio.wait issues.
+        """
+        llm_task = asyncio.create_task(coro)
+
+        async def _progress_ticker():
+            wait_seconds = 0
+            try:
+                while True:
+                    await asyncio.sleep(10)
+                    wait_seconds += 10
+                    await _emit_progress(
+                        f"⏳ Worker {worker_index}: {label} ({wait_seconds}s)\n\n"
+                    )
+            except asyncio.CancelledError:
+                pass
+
+        ticker = asyncio.create_task(_progress_ticker())
+        try:
+            return await llm_task
+        finally:
+            ticker.cancel()
+            try:
+                await ticker
+            except asyncio.CancelledError:
+                pass
+
+    async def _tool_call_with_progress(coro, tool_name: str):
+        """Run a tool coroutine with a background progress emitter.
+
+        Emits ⏳ every 15s so the UI doesn't appear stuck during long tool calls.
+        """
+        tool_task = asyncio.create_task(coro)
+
+        async def _progress_ticker():
+            wait_seconds = 0
+            try:
+                while True:
+                    await asyncio.sleep(15)
+                    wait_seconds += 15
+                    await _emit_progress(
+                        f"⏳ Worker {worker_index}: `{tool_name}` running... ({wait_seconds}s)\n\n"
+                    )
+            except asyncio.CancelledError:
+                pass
+
+        ticker = asyncio.create_task(_progress_ticker())
+        try:
+            return await tool_task
+        finally:
+            ticker.cancel()
+            try:
+                await ticker
+            except asyncio.CancelledError:
+                pass
     # Build sub-agent system prompt
     system_prompt = build_sub_agent_system_prompt(
         sub_agent_tool_functions, chinese_context
@@ -263,16 +330,33 @@ async def run_sub_agent(
     ]
 
     logger.info(f"[Sub-Agent] Starting subtask: {subtask[:200]}...")
+    short_task = subtask[:100] + ("..." if len(subtask) > 100 else "")
+    await _emit_progress(f"🔍 **Worker {worker_index}**: Starting research — {short_task}\n\n")
 
-    task_failed = False
     turn = 0
 
     for turn in range(MAX_SUB_AGENT_TURNS):
+        # Calculate total input chars for this LLM call
+        input_chars = sum(
+            len(str(m.get("content", "")))
+            + sum(
+                len(str(tc.get("function", {}).get("arguments", "")))
+                for tc in m.get("tool_calls", [])
+            )
+            for m in messages
+        )
+        await _emit_progress(
+            f"📊 Worker {worker_index}: Turn {turn + 1} — LLM input {input_chars:,} chars\n\n"
+        )
+
         try:
-            response = await client.chat.completions.create(
-                model=model,
-                messages=messages,
-                tools=tool_schema if tool_schema else None,
+            response = await _llm_call_with_progress(
+                client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=tool_schema if tool_schema else None,
+                ),
+                label=f"Waiting for LLM response (turn {turn + 1})...",
             )
         except Exception as e:
             logger.error(f"[Sub-Agent] LLM call failed at turn {turn}: {e}")
@@ -286,6 +370,12 @@ async def run_sub_agent(
             content = assistant_message.content or ""
             logger.info(f"[Sub-Agent] Completed at turn {turn} with {len(content)} chars")
             messages.append({"role": "assistant", "content": content})
+            if content:
+                # Show a truncated preview of the final response
+                preview = content[:300] + ("..." if len(content) > 300 else "")
+                await _emit_progress(
+                    f"💬 Worker {worker_index}: Response ({len(content)} chars):\n{preview}\n\n"
+                )
             break
 
         # Build assistant message for history
@@ -322,14 +412,39 @@ async def run_sub_agent(
                 )
                 continue
 
-            # Execute the tool (sync tools run in thread to avoid blocking event loop)
+            # Emit progress BEFORE tool execution so UI shows what's happening
+            progress_detail = ""
+            if parsed_args:
+                # Show the first meaningful argument value as context
+                first_val = next(iter(parsed_args.values()), "")
+                if isinstance(first_val, str) and len(first_val) > 80:
+                    first_val = first_val[:80] + "..."
+                progress_detail = f" | {first_val}"
+            await _emit_progress(
+                f"⚙️ Worker {worker_index}: `{func_name}`{progress_detail}\n\n"
+            )
+
+            # Execute the tool with timeout and progress ticker
+            TOOL_TIMEOUT = 30  # seconds
             try:
                 if func_name in tool_functions_map:
                     func = tool_functions_map[func_name]
                     if iscoroutinefunction(func):
-                        result = await func(**parsed_args)
+                        coro = func(**parsed_args)
                     else:
-                        result = await asyncio.to_thread(func, **parsed_args)
+                        coro = asyncio.to_thread(func, **parsed_args)
+                    try:
+                        result = await asyncio.wait_for(
+                            _tool_call_with_progress(
+                                coro, func_name
+                            ),
+                            timeout=TOOL_TIMEOUT,
+                        )
+                    except asyncio.TimeoutError:
+                        result = f"Error: Tool '{func_name}' timed out after {TOOL_TIMEOUT}s"
+                        await _emit_progress(
+                            f"⚠️ Worker {worker_index}: `{func_name}` timed out ({TOOL_TIMEOUT}s)\n\n"
+                        )
                     tool_result = str(result)
                 else:
                     tool_result = f"Error: Tool '{func_name}' not found."
@@ -344,38 +459,23 @@ async def run_sub_agent(
             )
     else:
         # Loop completed without break = max turns exhausted
-        task_failed = True
         logger.warning(
             f"[Sub-Agent] Reached max turns ({MAX_SUB_AGENT_TURNS})"
         )
 
-    # Generate summary via summarize prompt
-    summarize = generate_summarize_prompt(
-        task_description=subtask,
-        task_failed=task_failed,
-        is_main_agent=False,
-        chinese_context=chinese_context,
-    )
-    messages.append({"role": "user", "content": summarize})
+    # Extract last assistant content directly (no extra summary LLM call)
+    result = ""
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant" and msg.get("content"):
+            result = msg["content"]
+            break
 
-    try:
-        summary_response = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            # No tools parameter — force text-only response
-        )
-        summary = summary_response.choices[0].message.content or ""
-    except Exception as e:
-        logger.error(f"[Sub-Agent] Summary generation failed: {e}")
-        # Fall back to last assistant message
-        summary = "Error generating summary. "
-        for msg in reversed(messages):
-            if msg.get("role") == "assistant" and msg.get("content"):
-                summary += msg["content"]
-                break
+    if not result:
+        result = "No findings were produced for this subtask."
 
-    logger.info(f"[Sub-Agent] Summary: {len(summary)} chars")
-    return summary
+    logger.info(f"[Sub-Agent] Result: {len(result)} chars")
+    await _emit_progress(f"✅ **Worker {worker_index}**: Research complete.\n\n")
+    return result
 
 
 # --- Main Agent Loop ---
@@ -427,6 +527,9 @@ async def agent_loop(
     sub_agent_tool_functions = list(SUB_AGENT_TOOLS)
     max_parallel = int(os.getenv("SUB_AGENT_NUM", "3"))
 
+    # --- Progress queue for sub-agent streaming ---
+    progress_queue: asyncio.Queue = asyncio.Queue()
+
     # --- Create execute_subtasks closure (parallel sub-agent dispatch) ---
     async def execute_subtasks(subtasks_json: str) -> str:
         """
@@ -461,8 +564,10 @@ async def agent_loop(
                 subtask=q,
                 sub_agent_tool_functions=sub_agent_tool_functions,
                 chinese_context=chinese_context,
+                progress_queue=progress_queue,
+                worker_index=i + 1,
             )
-            for q in questions
+            for i, q in enumerate(questions)
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -643,15 +748,54 @@ async def agent_loop(
                     asyncio.to_thread(func, **parsed_args)
                 )
 
-        # Wait for all async tasks with periodic keepalive
+        # Wait for all async tasks, draining sub-agent progress queue
         if async_tasks:
             pending = set(async_tasks.values())
             while pending:
-                _, pending = await asyncio.wait(pending, timeout=15)
+                # Drain any progress messages from sub-agents
+                while not progress_queue.empty():
+                    try:
+                        progress_text = progress_queue.get_nowait()
+                        yield Chunk(
+                            type="text",
+                            content=progress_text,
+                            step_index=step_index,
+                        )
+                    except asyncio.QueueEmpty:
+                        break
+
+                _, pending = await asyncio.wait(pending, timeout=5)
                 if pending:
+                    # Drain again after wait
+                    drained = False
+                    while not progress_queue.empty():
+                        try:
+                            progress_text = progress_queue.get_nowait()
+                            yield Chunk(
+                                type="text",
+                                content=progress_text,
+                                step_index=step_index,
+                            )
+                            drained = True
+                        except asyncio.QueueEmpty:
+                            break
+                    # If no progress was emitted, send keepalive
+                    if not drained:
+                        yield Chunk(
+                            type="text", content="", step_index=step_index
+                        )
+
+            # Final drain after all tasks complete
+            while not progress_queue.empty():
+                try:
+                    progress_text = progress_queue.get_nowait()
                     yield Chunk(
-                        type="text", content="", step_index=step_index
+                        type="text",
+                        content=progress_text,
+                        step_index=step_index,
                     )
+                except asyncio.QueueEmpty:
+                    break
 
             # Collect async results
             for call_id, task in async_tasks.items():

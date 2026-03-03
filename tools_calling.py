@@ -169,6 +169,31 @@ Rules:
 1. Do not mention tool names to the user.
 2. Unless otherwise requested, respond in the same language as the user's message.
 3. If the task does not require research, answer directly.
+
+## Answer Precision Rules (CRITICAL)
+
+**Before outputting the final answer, carefully re-read the question's exact wording to determine what form of answer is required.**
+
+Different identifier types for the same entity are NOT interchangeable:
+- Personal name ≠ title ≠ era name ≠ temple name ≠ posthumous name ≠ pen name ≠ stage name
+- Full official name ≠ abbreviation ≠ nickname ≠ colloquial name
+- Dynasty name ≠ regime name ≠ state name
+
+Matching rules:
+1. If the question asks for a "name" — output the person's actual full personal name, NOT any title or honorific.
+2. If the question asks for a specific identifier type (title, era name, etc.) — output exactly that type.
+3. If the question asks "who" without specifying — use the most commonly recognized identifier based on context.
+4. When in doubt, prefer the form that most precisely matches the question's wording.
+
+## Full Name Rule (CRITICAL)
+
+**ALWAYS use full, complete, unabbreviated names in your final answer.** Never use shortened forms, abbreviations, acronyms, or informal names.
+
+- People: Use the person's COMPLETE FULL NAME (first + last, or full Chinese name), not just surname or given name alone.
+- Organizations: Use the FULL OFFICIAL NAME, not abbreviations or acronyms (e.g., "United Nations" not "UN"; "国际货币基金组织" not "IMF" or "基金组织").
+- Places: Use the complete official name, not colloquial short forms.
+- Works (books, films, etc.): Use the full official title.
+- If the question itself uses a short form, still answer with the full name of the ANSWER entity.
 """
 
     if chinese_context:
@@ -211,57 +236,53 @@ def build_sub_agent_system_prompt(
 
 # Agent Specific Objective
 
-You complete well-defined, single-scope research objectives efficiently and accurately.
+You complete well-defined, single-scope research objectives **efficiently and quickly**.
 Do not infer, speculate, or attempt to fill in missing parts yourself. Only return factual content.
 
-Critically assess the reliability of all information:
-- If the credibility of a source is uncertain, clearly flag it.
-- Do NOT treat information as trustworthy just because it appears — cross-check when necessary.
-- If you find conflicting or ambiguous information, include all relevant findings and flag the inconsistency.
+**EFFICIENCY IS CRITICAL** — You have a strict time budget. Find the answer as fast as possible and report immediately.
 
-Be cautious and transparent in your output:
-- Always return all related information. If information is incomplete or weakly supported, still share partial excerpts, and flag any uncertainty.
-- Never assume or guess — if an exact answer cannot be found, say so clearly.
+Information reliability guidelines:
+- If you find conflicting or ambiguous information, include all relevant findings and flag the inconsistency.
 - Prefer quoting or excerpting original source text rather than interpreting or rewriting it, and provide the URL if available.
 
 {tool_prompt}
 
 # Research Strategy
 
-## Early Answer Rule (IMPORTANT)
-If the search result snippets (titles, descriptions, answer boxes, knowledge graphs) already clearly and unambiguously answer your question, report the answer immediately WITHOUT analyzing individual webpages. Only proceed to webpage analysis when snippets are insufficient or ambiguous.
+## STOP-WHEN-FOUND Rule (HIGHEST PRIORITY)
+**Once you find a clear, well-sourced answer to your subtask, STOP all further tool calls and report immediately.**
+- Do NOT verify an already-found answer with additional searches or webpage analysis.
+- Do NOT seek "additional confirmation" or "cross-check" when you already have a reliable answer from a credible source.
+- A single authoritative source (Wikipedia, official website, established news outlet) is sufficient. Report and finish.
+- Only continue searching if the answer is genuinely unclear, conflicting, or unsupported.
 
-## Phase 1: Search
+## Early Answer Rule
+If the search result snippets (titles, descriptions, answer boxes, knowledge graphs) already clearly and unambiguously answer your question, report the answer immediately WITHOUT analyzing individual webpages.
+
+## Phase 1: Search (max 2-3 searches total)
 - Use `search_engine` to find relevant sources
 - Craft SHORT queries (3-7 keywords) targeting the specific subtask
-- Each new query MUST be substantially different from all previous queries — never repeat or accumulate keywords
-- For each aspect, perform at most 2-3 searches before moving to Phase 2
-- **If snippets already answer the question clearly, skip to Phase 4 (Report)**
+- Each new query MUST be substantially different from all previous queries
+- **If snippets already answer the question clearly, skip to Report immediately**
 
-## Phase 2: Analyze Pages (when snippets are insufficient)
-After getting search results, use `analyze_webpage`, `scrape_website`, or browser tools to read the most relevant URLs:
-- Select the top 2-3 most promising URLs from search results (based on title and snippet relevance)
-- Call `analyze_webpage(url, question)` for each URL
-- Review each analysis result before deciding next steps
+## Phase 2: Analyze Pages (only if snippets are insufficient)
+- Select only the top 1-2 most promising URLs
+- Call `analyze_webpage(url, question)` for each
+- **As soon as the answer is found, stop and report — do NOT analyze more pages**
 
-## Phase 3: Cross-Validation
-- Only needed when findings conflict or are ambiguous
-- Compare findings across sources to resolve contradictions
-
-## Phase 4: Report
+## Phase 3: Report
 - Synthesize findings with supporting evidence
-- Present all candidate answers with confidence levels
-- Document conflicting information or uncertainties
+- Present candidate answers with source URLs
+- Keep the report concise and factual
 
 ## Tool-Use Guidelines
 
 1. **Each step must involve exactly ONE tool call only.**
 2. Craft precise search queries: 3-7 discriminative keywords, targeting ONE specific aspect.
 3. **Query construction rule**: Search queries must be concise keyword phrases. Do NOT dump reasoning context into the query string.
-4. **Tool diversity requirement**: If you have used the same tool type 3 times in a row, you MUST switch to a different tool (e.g., from search to analyze_webpage, or vice versa).
+4. **Strict budget**: Use at most **6 total tool calls** per subtask. Plan your tool usage carefully.
 5. **For historical or time-specific content**: Use `search_wikipedia_revision` or `list_wikipedia_revisions` for Wikipedia history.
-6. Even if a tool result does not directly answer the question, thoroughly extract all partial information that may help guide future steps.
-7. After issuing ONE tool call, STOP immediately. Wait for the result.
+6. After issuing ONE tool call, STOP immediately. Wait for the result.
 """
 
     if chinese_context:
@@ -274,6 +295,14 @@ After getting search results, use `analyze_webpage`, `scrape_website`, or browse
 - **信息摘录**：保持中文原文的准确性，避免不必要的翻译或改写
 - **各种输出**：包括状态说明、过程描述、结果展示等所有输出都应使用中文
 - **回应格式**：对中文子任务的回应应使用中文，保持语境一致性
+
+## 答案精准性要求
+
+在报告研究结果时：
+- 请务必提供实体的多种标识形式（如个人姓名、年号、庙号、谥号、全称、简称等），以便主代理选择正确的答案格式。
+- **人名必须使用完整全名**（姓+名），不要只写姓或只写名。
+- **组织/机构名称必须使用完整官方全称**，不要使用缩写或简称。
+- **地名、作品名等也必须使用完整正式名称**。
 
 """
 
@@ -322,13 +351,19 @@ def generate_summarize_prompt(
             "If a definitive answer could not be determined, make a well-informed educated guess "
             "based on all gathered information.\n\n"
             "## IMPORTANT: Answer Formatting Rules\n\n"
-            "1. **Use canonical/primary names**: When the answer involves a person, place, or entity, "
-            "always output their most widely recognized primary name — NOT aliases, birth names, or alternative spellings.\n"
-            "2. **Match the question's framing**: If the question references an entity by a specific name, "
+            "1. **Answer EXACTLY what is asked** (HIGHEST PRIORITY): Read the question's final sentence carefully to determine what form of answer is required.\n"
+            "   - If the question asks for a 'name', output the person's ACTUAL FULL PERSONAL NAME, NOT any title, era name, temple name, or posthumous name.\n"
+            "   - If the question asks for a specific identifier type (title, era name, etc.), output exactly that type — NOT the personal name.\n"
+            "   - If the question asks 'who' without specifying, use the most commonly recognized identifier based on context.\n"
+            "2. **FULL NAME RULE** (CRITICAL): ALWAYS output complete, unabbreviated names:\n"
+            "   - People: complete full name (first + last name, or full Chinese name with surname + given name), NEVER just surname or given name alone.\n"
+            "   - Organizations: full official name, NEVER abbreviations or acronyms.\n"
+            "   - Places, works, events: full official name, NEVER colloquial short forms.\n"
+            "3. **Match the question's framing**: If the question references an entity by a specific name, "
             "use that same name form in your answer when possible.\n"
-            "3. **Numerical answers must be integers** unless the question explicitly involves decimals.\n"
-            "4. **Lowercase**: Convert all English letters in the answer to lowercase.\n"
-            "5. **Strip whitespace**: Remove any leading and trailing spaces from the answer.\n\n"
+            "4. **Numerical answers must be integers** unless the question explicitly involves decimals.\n"
+            "5. **Lowercase**: Convert all English letters in the answer to lowercase.\n"
+            "6. **Strip whitespace**: Remove any leading and trailing spaces from the answer.\n\n"
             "## IMPORTANT: Your response MUST be a JSON dictionary with the answer:\n"
             '{"answer": "your final answer here"}\n'
         )

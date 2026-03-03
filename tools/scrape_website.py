@@ -7,6 +7,7 @@ Requires JINA_API_KEY environment variable. Optionally uses JINA_READER_URL.
 import io
 import logging
 import os
+import re
 from typing import Optional
 
 import requests
@@ -30,6 +31,76 @@ def _is_blocked_content(content: str) -> bool:
     if len(content.strip()) < 200:
         return True
     return any(pattern in content for pattern in _JINA_BLOCKED_PATTERNS)
+
+
+def _clean_scraped_markdown(text: str) -> str:
+    """Remove noisy web elements from scraped markdown to reduce token count.
+
+    Strips images, hyperlinks (keeping display text), navigation elements,
+    Jina metadata headers, cookie/privacy banners, social media widgets,
+    and other non-content boilerplate.
+    """
+    # --- Jina metadata header lines ---
+    text = re.sub(r'^Title:.*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^URL Source:.*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^Published Time:.*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^Markdown Content:.*$', '', text, flags=re.MULTILINE)
+
+    # --- Images ---
+    # Linked images: [![alt](img_url)](page_url)
+    text = re.sub(r'\[!\[.*?\]\(.*?\)\]\(.*?\)', '', text)
+    # Standalone images: ![alt](url)
+    text = re.sub(r'!\[.*?\]\(.*?\)', '', text)
+
+    # --- Hyperlinks: keep display text, remove URL ---
+    # [display text](url) → display text
+    text = re.sub(r'\[([^\[\]]+)\]\(https?://[^\)]*\)', r'\1', text)
+    # [display text](relative/path) → display text
+    text = re.sub(r'\[([^\[\]]+)\]\(/[^\)]*\)', r'\1', text)
+    # [display text](#anchor) → display text
+    text = re.sub(r'\[([^\[\]]+)\]\(#[^\)]*\)', r'\1', text)
+
+    # --- Bare URLs on their own line ---
+    text = re.sub(r'^\s*https?://\S+\s*$', '', text, flags=re.MULTILINE)
+
+    # --- HTML remnants ---
+    # Inline HTML tags
+    text = re.sub(r'<(?:img|iframe|script|style|link|meta|noscript|svg|video|audio|source|picture|embed|object)[^>]*/?>', '', text, flags=re.IGNORECASE)
+    # Block HTML tags with content
+    text = re.sub(r'<(script|style|noscript|svg)\b[^>]*>.*?</\1>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    # Data attributes and aria labels (often left as noise)
+    text = re.sub(r'\s+(?:data-\w+|aria-\w+)="[^"]*"', '', text)
+
+    # --- Navigation / boilerplate lines ---
+    # Lines that are just "Skip to content", "Menu", "Close", "Toggle navigation", etc.
+    text = re.sub(
+        r'^\s*(?:Skip to (?:main )?content|Toggle (?:navigation|menu)|'
+        r'Close menu|Open menu|Back to top|'
+        r'Cookie (?:Policy|Settings|Preferences)|Accept (?:all )?cookies|'
+        r'Privacy Policy|Terms (?:of (?:Service|Use))|'
+        r'Share (?:on|this)|Tweet|Pin it|'
+        r'Follow us|Subscribe|Newsletter|'
+        r'Previous|Next|Read more|Show more|Load more|'
+        r'©\s*\d{4}.*$)\s*$',
+        '', text, flags=re.MULTILINE | re.IGNORECASE
+    )
+
+    # --- Citation references like [1], [2], [edit], [citation needed] ---
+    text = re.sub(r'\[\d+\]', '', text)
+    text = re.sub(r'\[edit\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[citation needed\]', '', text, flags=re.IGNORECASE)
+
+    # --- Empty markdown table separators ---
+    text = re.sub(r'^\|[\s\-\|:]+\|$', '', text, flags=re.MULTILINE)
+    # Empty table rows
+    text = re.sub(r'^\|\s*\|\s*$', '', text, flags=re.MULTILINE)
+
+    # --- Excessive whitespace ---
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    # Lines with only whitespace
+    text = re.sub(r'^\s+$', '', text, flags=re.MULTILINE)
+
+    return text.strip()
 
 
 def _scrape_by_jina(url: str) -> tuple[Optional[str], Optional[str]]:
@@ -70,7 +141,8 @@ def _scrape_by_jina(url: str) -> tuple[Optional[str], Optional[str]]:
         if _is_blocked_content(content):
             return None, f"Jina returned blocked/CAPTCHA page for {url}"
 
-        logger.info(f"Jina success: {url} ({len(content)} chars)")
+        content = _clean_scraped_markdown(content)
+        logger.info(f"Jina success: {url} ({len(content)} chars after cleaning)")
         return content, None
 
     except requests.exceptions.ConnectionError as e:
@@ -103,13 +175,13 @@ def _scrape_request(url: str) -> tuple[Optional[str], Optional[str]]:
             md = MarkItDown()
             content = md.convert_stream(stream).text_content
             if content and len(content.strip()) > 50:
-                return content, None
+                return _clean_scraped_markdown(content), None
         except Exception:
             pass
 
         # Fall back to raw HTML text
         if response.text and len(response.text.strip()) > 50:
-            return response.text, None
+            return _clean_scraped_markdown(response.text), None
 
         return None, "Page content is empty or too short"
 

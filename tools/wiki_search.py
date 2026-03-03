@@ -121,7 +121,7 @@ def _jina_fallback(entity: str, domain: str = "") -> str:
     return ""
 
 # Timeout (in seconds) for Wikipedia API calls before falling back to Jina
-_WIKIPEDIA_TIMEOUT = 5
+_WIKIPEDIA_TIMEOUT = 2
 
 def search_wikipedia(entity: str, first_sentences: int = 0) -> str:
     """
@@ -218,10 +218,10 @@ def search_wikipedia(entity: str, first_sentences: int = 0) -> str:
         except wikipedia.exceptions.WikipediaException as e:
             return f"Wikipedia Error: {str(e)}"
 
+    executor = ThreadPoolExecutor(max_workers=1)
     try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_core)
-            return future.result(timeout=_WIKIPEDIA_TIMEOUT)
+        future = executor.submit(_core)
+        return future.result(timeout=_WIKIPEDIA_TIMEOUT)
     except FuturesTimeoutError:
         logger.warning(
             f"Wikipedia API timed out after {_WIKIPEDIA_TIMEOUT}s for '{entity}', "
@@ -246,6 +246,8 @@ def search_wikipedia(entity: str, first_sentences: int = 0) -> str:
         if fallback:
             return fallback
         return f"Unexpected Error: {str(e)}"
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def search_wikipedia_revision(
@@ -267,6 +269,36 @@ def search_wikipedia_revision(
     if not date and not revision_id:
         return "Error: Either 'date' (YYYY-MM-DD) or 'revision_id' must be provided."
 
+    def _core() -> str:
+        return _search_wikipedia_revision_inner(entity, date, revision_id)
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = executor.submit(_core)
+        return future.result(timeout=_WIKIPEDIA_TIMEOUT)
+    except FuturesTimeoutError:
+        logger.warning(
+            f"Wikipedia revision API timed out after {_WIKIPEDIA_TIMEOUT}s for '{entity}', "
+            f"falling back to Jina"
+        )
+        fallback = _jina_fallback(entity)
+        if fallback:
+            return fallback
+        return (
+            f"Timeout Error: Wikipedia API did not respond within {_WIKIPEDIA_TIMEOUT}s "
+            f"for '{entity}'."
+        )
+    except Exception as e:
+        fallback = _jina_fallback(entity)
+        if fallback:
+            return fallback
+        return f"Unexpected Error: {str(e)}"
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _search_wikipedia_revision_inner(entity: str, date: str, revision_id: int) -> str:
+    """Inner implementation of search_wikipedia_revision (runs in thread with timeout)."""
     try:
         with _wiki_lang(entity) as domain:
             # Step 1: Resolve page title
@@ -394,6 +426,31 @@ def list_wikipedia_revisions(
     """
     limit = min(limit, 50)
 
+    def _core() -> str:
+        return _list_wikipedia_revisions_inner(entity, start_date, end_date, limit)
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = executor.submit(_core)
+        return future.result(timeout=_WIKIPEDIA_TIMEOUT)
+    except FuturesTimeoutError:
+        logger.warning(
+            f"Wikipedia revisions list API timed out after {_WIKIPEDIA_TIMEOUT}s for '{entity}'"
+        )
+        return (
+            f"Timeout Error: Wikipedia API did not respond within {_WIKIPEDIA_TIMEOUT}s "
+            f"for '{entity}'."
+        )
+    except Exception as e:
+        return f"Unexpected Error: {str(e)}"
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _list_wikipedia_revisions_inner(
+    entity: str, start_date: str, end_date: str, limit: int
+) -> str:
+    """Inner implementation of list_wikipedia_revisions (runs in thread with timeout)."""
     try:
         with _wiki_lang(entity) as domain:
             try:
