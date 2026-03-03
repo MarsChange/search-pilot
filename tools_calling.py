@@ -193,7 +193,7 @@ Matching rules:
 - Organizations: Use the FULL OFFICIAL NAME, not abbreviations or acronyms (e.g., "United Nations" not "UN"; "国际货币基金组织" not "IMF" or "基金组织").
 - Places: Use the complete official name, not colloquial short forms.
 - Works (books, films, etc.): Use the full official title.
-- If the question itself uses a short form, still answer with the full name of the ANSWER entity.
+- If the question specifies an output format, you MUST follow it EXACTLY.** The user's format instruction overrides default behavior.
 """
 
     if chinese_context:
@@ -303,11 +303,11 @@ If the search result snippets (titles, descriptions, answer boxes, knowledge gra
 - **人名必须使用完整全名**（姓+名），不要只写姓或只写名。
 - **组织/机构名称必须使用完整官方全称**，不要使用缩写或简称。
 - **地名、作品名等也必须使用完整正式名称**。
+- **若原始问题指定了输出格式**（如“要求格式形如”、“只回答年份”、“请用中文全称回答”、“Answer with first name and last name only”等），请在报告中明确标注该格式要求，确保主代理能够精确遵循。
 
 """
 
     return prompt
-
 
 def generate_summarize_prompt(
     task_description: str,
