@@ -537,6 +537,7 @@ def _list_wikipedia_revisions_inner(
                 f"with entity=\"{page_title}\" and revision_id=<ID>"
             )
 
+
             return "\n".join(result_parts)
 
     except requests.exceptions.RequestException as e:
