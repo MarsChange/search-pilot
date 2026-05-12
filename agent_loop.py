@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import inspect
 import json
 import logging
@@ -6,6 +7,7 @@ import os
 import re
 from dataclasses import dataclass
 from inspect import iscoroutinefunction
+from pathlib import Path
 from typing import (
     Any,
     AsyncIterator,
@@ -42,6 +44,7 @@ MAX_SOURCES_PER_REPORT = 4
 MAX_CANONICAL_NAMES = 4
 MAX_MAIN_TOOL_RESULT_CHARS = 16000
 MAX_WORKER_PREVIEW_CHARS = 300
+MEMORY_LEDGER_PATH = Path(__file__).resolve().parent / "MEMORY.md"
 
 DEFAULT_SYSTEM_PROMPT = """
 Accuracy is more important than speed.
@@ -287,6 +290,107 @@ def _extract_urls(text: str, limit: int = MAX_SOURCES_PER_REPORT) -> list[str]:
     return unique
 
 
+def _markdown_blockquote(text: str) -> str:
+    lines = str(text or "").strip().splitlines() or [""]
+    return "\n".join(f"> {line}" if line else ">" for line in lines)
+
+
+def _append_memory_section(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as file:
+        file.write(content)
+        if not content.endswith("\n"):
+            file.write("\n")
+
+
+def _escape_markdown_table_cell(value: Any) -> str:
+    text = " ".join(str(value or "").split())
+    return text.replace("\\", "\\\\").replace("|", "\\|")
+
+
+def _initialize_memory_ledger(path: Path, user_question: str) -> None:
+    created_at = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    content = (
+        "# MEMORY\n\n"
+        "This ledger is regenerated for each top-level agent request. It records "
+        "the main agent's delegated subtasks and the normalized JSON reports "
+        "returned by sub-agents.\n\n"
+        f"- Created at: {created_at}\n\n"
+        "## Original Question\n\n"
+        f"{_markdown_blockquote(user_question)}\n"
+    )
+    path.write_text(content, encoding="utf-8")
+
+
+def _append_subtasks_to_memory_ledger(
+    path: Path,
+    round_index: int,
+    subtasks: list[str],
+) -> None:
+    lines = [f"\n## Round {round_index} - Planned Subtasks\n"]
+    if not subtasks:
+        lines.append("- No subtasks provided.")
+    else:
+        for index, subtask in enumerate(subtasks, start=1):
+            normalized = " ".join(str(subtask).strip().split())
+            lines.append(f"{index}. {normalized}")
+    _append_memory_section(path, "\n".join(lines) + "\n")
+
+
+def _append_worker_reports_to_memory_ledger(
+    path: Path,
+    round_index: int,
+    worker_reports: list[dict],
+    ledger_update: dict,
+) -> None:
+    lines = [f"\n## Round {round_index} - Worker Reports\n"]
+    if not worker_reports:
+        lines.append("- No worker reports.")
+    else:
+        for index, report in enumerate(worker_reports, start=1):
+            lines.extend(
+                [
+                    f"### Worker {index}",
+                    "",
+                    "```json",
+                    json.dumps(report, ensure_ascii=False, indent=2),
+                    "```",
+                    "",
+                ]
+            )
+
+    lines.extend(
+        [
+            f"## Round {round_index} - Subtask Status",
+            "",
+            "| # | Status | Confidence | Subtask | Answer |",
+            "|---|---|---|---|---|",
+        ]
+    )
+    if not worker_reports:
+        lines.append("| - | unresolved | low | No worker reports. | |")
+    else:
+        for index, report in enumerate(worker_reports, start=1):
+            status = _escape_markdown_table_cell(report.get("status", "unresolved"))
+            confidence = _escape_markdown_table_cell(report.get("confidence", "low"))
+            subtask = _escape_markdown_table_cell(report.get("subtask", ""))
+            answer = _escape_markdown_table_cell(report.get("subtask_answer", ""))
+            lines.append(f"| {index} | {status} | {confidence} | {subtask} | {answer} |")
+    lines.append("")
+
+    lines.extend(
+        [
+            f"## Round {round_index} - Ledger Update",
+            "",
+            "```json",
+            json.dumps(ledger_update, ensure_ascii=False, indent=2),
+            "```",
+            "",
+        ]
+    )
+    _append_memory_section(path, "\n".join(lines))
+
+
 def _normalize_worker_report(report_text: str, subtask: str, worker_index: int) -> dict:
     payload = _extract_json_object(report_text) or {}
     if not payload:
@@ -387,7 +491,7 @@ def _build_ledger_update(reports: list[dict]) -> dict:
     }
 
 
-def _serialize_subtask_result(questions: list[str], results: list[Any]) -> str:
+def _build_subtask_result_payload(questions: list[str], results: list[Any]) -> dict:
     worker_reports = []
     for index, (subtask, result) in enumerate(zip(questions, results), start=1):
         if isinstance(result, Exception):
@@ -411,16 +515,24 @@ def _serialize_subtask_result(questions: list[str], results: list[Any]) -> str:
             report = _normalize_worker_report(str(result), subtask, index)
         worker_reports.append(report)
 
-    payload = {
+    return {
         "worker_reports": worker_reports,
         "ledger_update": _build_ledger_update(worker_reports),
     }
+
+
+def _serialize_subtask_payload(payload: dict) -> str:
     serialized = json.dumps(payload, ensure_ascii=False)
     if len(serialized) <= MAX_MAIN_TOOL_RESULT_CHARS:
         return serialized
+    worker_reports = payload.get("worker_reports", [])
     payload["worker_reports"] = worker_reports[: min(2, len(worker_reports))]
     payload["ledger_update"] = _build_ledger_update(worker_reports)
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _serialize_subtask_result(questions: list[str], results: list[Any]) -> str:
+    return _serialize_subtask_payload(_build_subtask_result_payload(questions, results))
 
 
 def _looks_like_answer_json(text: str) -> bool:
@@ -757,15 +869,20 @@ async def agent_loop(
                 user_question = content
             break
 
+    _initialize_memory_ledger(MEMORY_LEDGER_PATH, user_question)
+
     chinese_context = _contains_cjk(user_question)
     yield Chunk(type="text", content="", step_index=0)
 
     sub_agent_tool_functions = list(SUB_AGENT_TOOLS)
     max_parallel = int(os.getenv("SUB_AGENT_NUM", "3"))
     progress_queue: asyncio.Queue = asyncio.Queue()
+    delegation_round = 0
 
     async def execute_subtasks(subtasks_json: str) -> str:
         """Delegate one or more research subtasks to worker agents."""
+        nonlocal delegation_round
+
         try:
             questions = json.loads(subtasks_json)
             if isinstance(questions, str):
@@ -788,7 +905,13 @@ async def agent_loop(
                 ensure_ascii=False,
             )
 
-        questions = questions[:max_parallel]
+        questions = [str(question) for question in questions[:max_parallel]]
+        delegation_round += 1
+        _append_subtasks_to_memory_ledger(
+            MEMORY_LEDGER_PATH,
+            delegation_round,
+            questions,
+        )
         logger.info("[Main Agent] Dispatching %s subtask(s) in parallel", len(questions))
 
         tasks = [
@@ -805,7 +928,14 @@ async def agent_loop(
             for index, question in enumerate(questions)
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        return _serialize_subtask_result(questions, results)
+        payload = _build_subtask_result_payload(questions, results)
+        _append_worker_reports_to_memory_ledger(
+            MEMORY_LEDGER_PATH,
+            delegation_round,
+            payload["worker_reports"],
+            payload["ledger_update"],
+        )
+        return _serialize_subtask_payload(payload)
 
     main_agent_tools = [execute_subtasks] + list(tool_functions or [])
     system_prompt = build_main_agent_system_prompt(

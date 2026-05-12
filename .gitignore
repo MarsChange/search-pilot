@@ -7,3 +7,4 @@ answers
 __pycache__
 ./**/__pycache__/
 example
+AGENTS.md

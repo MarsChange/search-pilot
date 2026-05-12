@@ -1,4 +1,4 @@
-hao"""
+"""
 Prompt builders and tool calling utilities for the agent.
 
 Provides system prompt generation for main agent and sub-agent, tool function
@@ -105,6 +105,7 @@ Call `execute_subtasks` with a JSON array of self-contained subtask strings.
 - Maximum {max_parallel} subtasks in one call.
 - Each subtask must include the local goal, relevant confirmed context, and answer-format requirement.
 - Only parallelize independent nodes.
+- The runtime writes each delegation round to `MEMORY.md`: planned subtasks are saved before workers start, and normalized worker JSON reports are saved after workers return.
 
 The tool returns compact JSON with this shape:
 {{
