@@ -8,9 +8,12 @@ import asyncio
 import json
 import logging
 import os
-from typing import Optional
+import time
+from typing import Any, Optional
 
 from openai import AsyncOpenAI
+
+from deep_research.runtime_logging import emit_runtime_log
 
 logger = logging.getLogger(__name__)
 
@@ -70,17 +73,45 @@ async def analyze_webpage(url: str, question: str) -> str:
     Returns:
         A compact JSON string containing structured evidence.
     """
+    started = time.monotonic()
+    emit_runtime_log("webpage_analysis_start", tool="analyze_webpage", url=url, question=question)
     content, error = await _fetch_content(url)
     if error:
+        emit_runtime_log(
+            "webpage_analysis_error",
+            tool="analyze_webpage",
+            url=url,
+            status="fetch_error",
+            error=error,
+            elapsed_seconds=round(time.monotonic() - started, 3),
+        )
         return _fallback_payload(url, "", error)
 
     if not content or len(content.strip()) < 50:
+        emit_runtime_log(
+            "webpage_analysis_error",
+            tool="analyze_webpage",
+            url=url,
+            status="empty_content",
+            chars=len(content or ""),
+            elapsed_seconds=round(time.monotonic() - started, 3),
+        )
         return _fallback_payload(url, "", "Page content is empty or too short.")
 
     if len(content) > MAX_CONTENT_LENGTH:
         content = content[:MAX_CONTENT_LENGTH] + "\n\n...[content truncated]"
 
-    return await _analyze_with_llm(content, url, question)
+    result = await _analyze_with_llm(content, url, question)
+    emit_runtime_log(
+        "webpage_analysis_end",
+        tool="analyze_webpage",
+        url=url,
+        status="ok" if not result.startswith("Error:") else "error",
+        content_chars=len(content),
+        result_chars=len(result),
+        elapsed_seconds=round(time.monotonic() - started, 3),
+    )
+    return result
 
 
 async def _fetch_content(url: str) -> tuple[Optional[str], Optional[str]]:
@@ -118,6 +149,7 @@ async def _analyze_with_llm(content: str, url: str, question: str) -> str:
 {content}
 """
 
+    started = time.monotonic()
     try:
         response = await client.chat.completions.create(
             model=model,
@@ -128,6 +160,10 @@ async def _analyze_with_llm(content: str, url: str, question: str) -> str:
             temperature=0.1,
         )
         raw = response.choices[0].message.content or ""
+        _emit_llm_usage(response, model=model, messages=[
+            {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ], content=raw, elapsed_seconds=round(time.monotonic() - started, 3))
         cleaned = _strip_code_fence(raw)
         data = json.loads(cleaned)
         if not isinstance(data, dict):
@@ -137,6 +173,29 @@ async def _analyze_with_llm(content: str, url: str, question: str) -> str:
     except Exception as exc:
         logger.warning("LLM analysis failed for %s: %s", url, exc)
         return _fallback_payload(url, content[:800], str(exc))
+
+
+def _emit_llm_usage(response: Any, *, model: str, messages: list[dict[str, str]], content: str, elapsed_seconds: float) -> None:
+    usage = getattr(response, "usage", None)
+    prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0) if usage is not None else 0
+    completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0) if usage is not None else 0
+    total_tokens = int(getattr(usage, "total_tokens", 0) or 0) if usage is not None else 0
+    estimated = False
+    if not total_tokens:
+        prompt_tokens = max(1, int(sum(len(item.get("content", "")) for item in messages) / 3.5))
+        completion_tokens = max(1, int(len(content or "") / 3.5))
+        total_tokens = prompt_tokens + completion_tokens
+        estimated = True
+    emit_runtime_log(
+        "llm_call_end",
+        component="analyze_webpage",
+        model=model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        estimated=estimated,
+        elapsed_seconds=elapsed_seconds,
+    )
 
 
 WEBPAGE_ANALYZER_TOOLS = [

@@ -13,6 +13,7 @@ import logging
 from contextlib import contextmanager
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from urllib.parse import quote
 import requests
 import wikipedia
 import wikipedia.wikipedia as wiki_internal
@@ -22,9 +23,11 @@ logger = logging.getLogger(__name__)
 # Set a proper User-Agent to avoid being blocked by Wikipedia API
 wikipedia.set_user_agent("TianchiAgent/1.0 (Research Bot; Python/wikipedia)")
 
-# Wikipedia configuration — always use English Wikipedia
+# Wikipedia configuration
 _EN_API_URL = "https://en.wikipedia.org/w/api.php"
 _EN_DOMAIN = "en.wikipedia.org"
+_ZH_API_URL = "https://zh.wikipedia.org/w/api.php"
+_ZH_DOMAIN = "zh.wikipedia.org"
 
 # Set default API URL
 wiki_internal.API_URL = _EN_API_URL
@@ -32,8 +35,22 @@ wiki_internal.API_URL = _EN_API_URL
 
 @contextmanager
 def _wiki_lang(entity: str):
-    """Context manager that yields the Wikipedia domain (always English)."""
-    yield _EN_DOMAIN
+    """Temporarily route Wikipedia calls by entity language."""
+    domain = _wiki_domain_for_entity(entity)
+    previous_api_url = wiki_internal.API_URL
+    wiki_internal.API_URL = f"https://{domain}/w/api.php"
+    try:
+        yield domain
+    finally:
+        wiki_internal.API_URL = previous_api_url
+
+
+def _wiki_domain_for_entity(entity: str) -> str:
+    return _ZH_DOMAIN if _contains_cjk(entity) else _EN_DOMAIN
+
+
+def _contains_cjk(text: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in text or "")
 
 
 # Jina fallback configuration
@@ -109,7 +126,7 @@ def _jina_fallback(entity: str, domain: str = "") -> str:
             content = _clean_jina_wikipedia(resp.text.strip())
             return (
                 f"Page Title: {entity}\n\n"
-                f"Content (via Jina fallback):\n{content[:50000]}\n\n"
+                f"Content (via Jina fallback):\n{content[:_WIKIPEDIA_CONTENT_LIMIT]}\n\n"
                 f"URL: {wiki_url}"
             )
         logger.warning(
@@ -121,7 +138,8 @@ def _jina_fallback(entity: str, domain: str = "") -> str:
     return ""
 
 # Timeout (in seconds) for Wikipedia API calls before falling back to Jina
-_WIKIPEDIA_TIMEOUT = 2
+_WIKIPEDIA_TIMEOUT = int(os.getenv("WIKIPEDIA_TIMEOUT", "8"))
+_WIKIPEDIA_CONTENT_LIMIT = int(os.getenv("WIKIPEDIA_CONTENT_LIMIT", "8000"))
 
 def search_wikipedia(entity: str, first_sentences: int = 0) -> str:
     """
@@ -142,34 +160,44 @@ def search_wikipedia(entity: str, first_sentences: int = 0) -> str:
 
     def _core_inner(domain: str) -> str:
         try:
-            page = wikipedia.page(title=entity, auto_suggest=False)
-
-            result_parts = [f"Page Title: {page.title}"]
-
             if first_sentences > 0:
                 try:
                     summary = wikipedia.summary(
                         entity, sentences=first_sentences, auto_suggest=False
                     )
-                    result_parts.append(
-                        f"First {first_sentences} sentences (introduction): {summary}"
+                    url = f"https://{domain}/wiki/{quote(entity.replace(' ', '_'))}"
+                    return "\n\n".join(
+                        [
+                            f"Page Title: {entity}",
+                            f"First {first_sentences} sentences (introduction): {summary}",
+                            f"URL: {url}",
+                        ]
                     )
                 except Exception:
+                    page = wikipedia.page(title=entity, auto_suggest=False)
                     content_sentences = page.content.split(". ")[:first_sentences]
                     summary = (
                         ". ".join(content_sentences) + "."
                         if content_sentences
                         else page.content[:5000] + "..."
                     )
-                    result_parts.append(
-                        f"First {first_sentences} sentences (introduction): {summary}"
+                    return "\n\n".join(
+                        [
+                            f"Page Title: {page.title}",
+                            f"First {first_sentences} sentences (introduction): {summary}",
+                            f"URL: {page.url}",
+                        ]
                     )
             else:
-                result_parts.append(f"Content: {page.content}")
+                page = wikipedia.page(title=entity, auto_suggest=False)
 
-            result_parts.append(f"URL: {page.url}")
-
-            return "\n\n".join(result_parts)
+            return "\n\n".join(
+                [
+                    f"Page Title: {page.title}",
+                    f"Content: {page.content[:_WIKIPEDIA_CONTENT_LIMIT]}",
+                    f"URL: {page.url}",
+                ]
+            )
 
         except wikipedia.exceptions.DisambiguationError as e:
             options_list = "\n".join(

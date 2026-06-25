@@ -8,10 +8,13 @@ import io
 import logging
 import os
 import re
+import time
 from typing import Optional
 
 import requests
 from markitdown import MarkItDown
+
+from deep_research.runtime_logging import emit_runtime_log
 
 logger = logging.getLogger(__name__)
 
@@ -205,27 +208,73 @@ def scrape_website(url: str) -> str:
     Returns:
         The webpage content converted to markdown text, or an error message.
     """
+    started = time.monotonic()
     if not url:
+        emit_runtime_log("webpage_parse_error", tool="scrape_website", status="error", error="empty URL")
         return "Error: URL is empty. Please provide a valid URL."
 
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
+    emit_runtime_log("webpage_parse_start", tool="scrape_website", url=url)
 
     if "huggingface.co/datasets" in url or "huggingface.co/spaces" in url:
+        emit_runtime_log(
+            "webpage_parse_error",
+            tool="scrape_website",
+            url=url,
+            status="unsupported",
+            error="Hugging Face datasets/spaces are not scraped by this tool.",
+            elapsed_seconds=round(time.monotonic() - started, 3),
+        )
         return "Error: Cannot scrape Hugging Face datasets/spaces. Use other tools for this."
 
     # Try Jina Reader first (Jina servers can access foreign sites even from China)
     content, jina_error = _scrape_by_jina(url)
     if content is not None:
+        emit_runtime_log(
+            "webpage_parse_end",
+            tool="scrape_website",
+            url=url,
+            strategy="jina",
+            status="ok",
+            chars=len(content),
+            elapsed_seconds=round(time.monotonic() - started, 3),
+        )
         return content
 
     logger.warning(f"Jina failed ({jina_error}), falling back to requests: {url}")
+    emit_runtime_log(
+        "webpage_parse_fallback",
+        tool="scrape_website",
+        url=url,
+        from_strategy="jina",
+        to_strategy="requests",
+        error=jina_error,
+    )
 
     # Fallback to requests + MarkItDown (needs direct network access or proxy)
     content, req_error = _scrape_request(url)
     if content is not None:
+        emit_runtime_log(
+            "webpage_parse_end",
+            tool="scrape_website",
+            url=url,
+            strategy="requests",
+            status="ok",
+            chars=len(content),
+            elapsed_seconds=round(time.monotonic() - started, 3),
+        )
         return content
 
+    emit_runtime_log(
+        "webpage_parse_error",
+        tool="scrape_website",
+        url=url,
+        status="error",
+        jina_error=jina_error,
+        requests_error=req_error,
+        elapsed_seconds=round(time.monotonic() - started, 3),
+    )
     return f"Error: Both scraping methods failed.\nJina: {jina_error}\nRequests: {req_error}"
 
 
