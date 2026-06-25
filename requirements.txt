@@ -7,6 +7,7 @@ openai
 
 # Data validation
 pydantic
+python-dotenv
 
 # YAML parsing
 pyyaml
@@ -14,11 +15,23 @@ pyyaml
 # HTTP requests
 requests
 
+# Numerical / memory / planning
+numpy
+scikit-learn
+networkx
+pandas
+sentence-transformers
+
 # Wikipedia API
 wikipedia
 
 # Web scraping & content conversion
 markitdown
+beautifulsoup4
 
 # MCP client for Playwright browser tools
 mcp
+
+# Tests
+pytest
+pytest-asyncio

@@ -1,4 +1,5 @@
 .env
+.pytest_cache
 test
 .DS_Store
 .vscode
@@ -7,4 +8,8 @@ answers
 __pycache__
 ./**/__pycache__/
 example
+logs/
+data/
+data/eval_checkpoints/
+data/**/eval_memory/
 AGENTS.md

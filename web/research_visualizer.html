@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tianchi Agent 检索推理过程</title>
+  <style>
+    :root {
+      --bg: #f3f5f8;
+      --panel: #ffffff;
+      --ink: #182230;
+      --muted: #667085;
+      --line: #d8dee8;
+      --blue: #155eef;
+      --green: #14804a;
+      --amber: #b54708;
+      --red: #b42318;
+      --cyan: #0e7090;
+      --shadow: 0 18px 45px rgba(16, 24, 40, .08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 18% 0%, rgba(21, 94, 239, .13), transparent 28%),
+        linear-gradient(180deg, #fbfcff 0%, var(--bg) 38%);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+    header {
+      padding: 22px 28px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+    h1 { margin: 0; font-size: 22px; line-height: 1.25; }
+    h2 { margin: 0; font-size: 15px; }
+    .shell { padding: 0 24px 24px; }
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(300px, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .mode-switch {
+      display: inline-grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255,255,255,.78);
+      box-shadow: var(--shadow);
+    }
+    .mode-switch button {
+      width: auto;
+      margin: 0;
+      color: var(--ink);
+      background: transparent;
+      border-radius: 7px;
+      min-width: 118px;
+    }
+    .mode-switch button.active {
+      color: #fff;
+      background: var(--blue);
+    }
+    .status-strip {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font-size: 13px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255,255,255,.78);
+    }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+    .dot.running { background: var(--blue); }
+    .dot.done { background: var(--green); }
+    .dot.failed { background: var(--red); }
+    .layout {
+      display: grid;
+      grid-template-columns: 340px minmax(420px, 1fr) 390px;
+      gap: 16px;
+      align-items: start;
+    }
+    .panel {
+      border: 1px solid rgba(216, 222, 232, .95);
+      border-radius: 10px;
+      background: rgba(255,255,255,.92);
+      box-shadow: var(--shadow);
+      min-width: 0;
+    }
+    .panel-head {
+      min-height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .panel-body { padding: 16px; }
+    label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+    textarea, input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--ink);
+      background: #fff;
+      font: inherit;
+      padding: 10px 12px;
+      outline: none;
+    }
+    textarea:focus, input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(21,94,239,.12); }
+    textarea { min-height: 168px; resize: vertical; line-height: 1.55; }
+	    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+	    .check-row {
+	      display: flex;
+	      align-items: center;
+	      gap: 8px;
+	      margin-top: 10px;
+	      color: var(--muted);
+	      font-size: 13px;
+	    }
+	    .check-row input { width: auto; }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: var(--blue);
+      color: white;
+      font: inherit;
+      font-weight: 680;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 14px;
+    }
+    button:disabled { opacity: .56; cursor: not-allowed; }
+    .secondary { background: #edf1f7; color: var(--ink); }
+    .ghost { background: transparent; color: var(--blue); border: 1px solid var(--line); }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 12px;
+      background: #fbfcff;
+    }
+    .metric .value { font-size: 24px; font-weight: 780; line-height: 1.1; }
+    .metric .name { color: var(--muted); font-size: 12px; margin-top: 5px; }
+    .graph {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 10px;
+      align-content: start;
+      max-height: 48vh;
+      overflow: auto;
+    }
+    .node, .event, .source, .env-row, .eval-row {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fff;
+    }
+    .node { padding: 12px; min-height: 118px; border-left: 4px solid var(--muted); }
+    .node.running { border-left-color: var(--blue); background: #eef4ff; }
+    .node.success { border-left-color: var(--green); }
+    .node.failed { border-left-color: var(--red); }
+    .node.skipped { border-left-color: var(--amber); }
+    .id, .small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .desc { font-size: 14px; line-height: 1.45; margin: 6px 0 8px; }
+    .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tag {
+      border-radius: 999px;
+      background: #f2f4f7;
+      color: #344054;
+      font-size: 11px;
+      padding: 3px 7px;
+      overflow-wrap: anywhere;
+    }
+    .answer {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 14px;
+      background: #fbfcff;
+      min-height: 72px;
+      font-size: 20px;
+      font-weight: 760;
+      overflow-wrap: anywhere;
+    }
+    .timeline, .source-list, .env-list, .eval-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow: auto;
+    }
+    .timeline { max-height: 34vh; }
+    .source-list { max-height: 38vh; }
+    .env-list { max-height: 190px; }
+    .eval-list { max-height: 58vh; }
+    .event { display: grid; grid-template-columns: 88px 1fr; gap: 8px; padding: 11px; font-size: 13px; }
+    .event strong { color: var(--blue); overflow-wrap: anywhere; }
+    .source { padding: 11px; font-size: 13px; line-height: 1.45; }
+    .source a { color: var(--blue); overflow-wrap: anywhere; }
+    .env-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 11px;
+      font-size: 13px;
+    }
+	    .eval-row { padding: 12px; border-left: 4px solid var(--muted); }
+	    .eval-row.running { border-left-color: var(--blue); }
+	    .eval-row.correct { border-left-color: var(--green); }
+	    .eval-row.incorrect, .eval-row.error { border-left-color: var(--red); }
+	    .eval-row .qa { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+	    .eval-process {
+	      margin-top: 10px;
+	      display: grid;
+	      gap: 10px;
+	    }
+	    .path {
+	      color: var(--muted);
+	      font-size: 12px;
+	      line-height: 1.5;
+	      overflow-wrap: anywhere;
+	    }
+	    .mini-graph {
+	      display: grid;
+	      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+	      gap: 7px;
+	    }
+	    .mini-node {
+	      border: 1px solid var(--line);
+	      border-left: 3px solid var(--muted);
+	      border-radius: 8px;
+	      padding: 8px;
+	      background: #fbfcff;
+	      min-height: 68px;
+	      font-size: 12px;
+	      overflow-wrap: anywhere;
+	    }
+	    .mini-node.running { border-left-color: var(--blue); background: #eef4ff; }
+	    .mini-node.success { border-left-color: var(--green); }
+	    .mini-node.failed { border-left-color: var(--red); }
+	    .mini-node.skipped { border-left-color: var(--amber); }
+	    .eval-sources {
+	      display: grid;
+	      gap: 6px;
+	      max-height: 180px;
+	      overflow: auto;
+	    }
+	    .eval-source {
+	      border: 1px solid var(--line);
+	      border-radius: 8px;
+	      padding: 8px;
+	      background: #fff;
+	      font-size: 12px;
+	      line-height: 1.4;
+	    }
+	    .eval-source a { color: var(--blue); overflow-wrap: anywhere; }
+    .ok { color: var(--green); }
+    .warn { color: var(--amber); }
+    .bad { color: var(--red); }
+    .cyan { color: var(--cyan); }
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: #101828;
+      color: #e4e7ec;
+      padding: 12px;
+      border-radius: 9px;
+      max-height: 230px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      margin: 0;
+    }
+    .hidden { display: none; }
+    @media (max-width: 1180px) {
+      .layout { grid-template-columns: 320px 1fr; }
+      .side-right { grid-column: 1 / -1; }
+    }
+    @media (max-width: 780px) {
+      header, .topbar { display: block; }
+      .shell { padding: 0 12px 16px; }
+      .layout { display: block; }
+      .panel { margin-bottom: 12px; }
+      .controls, .metric-grid, .eval-row .qa { grid-template-columns: 1fr; }
+      .mode-switch { width: 100%; margin-bottom: 12px; }
+      .mode-switch button { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Tianchi Agent 检索推理过程</h1>
+      <div class="small">SearchPilot 多跳问答工作台</div>
+    </div>
+    <div class="status-strip"><span id="runDot" class="dot"></span><span id="runStatus">未运行</span></div>
+  </header>
+
+  <div class="shell">
+    <div class="topbar">
+      <div class="mode-switch">
+        <button id="singleMode" class="active">⌕ 单题检索</button>
+        <button id="evalMode">▦ 200题评测</button>
+      </div>
+      <div class="small" id="runCommand"></div>
+    </div>
+
+    <div id="singleView" class="layout">
+      <section class="panel">
+        <div class="panel-head"><h2>Search Query</h2><span class="small">/stream</span></div>
+        <div class="panel-body">
+          <label for="question">问题</label>
+          <textarea id="question">Who is the author of the article that introduces the methodology of prosopography and demographic analysis of colonial social structures?</textarea>
+          <div class="controls">
+            <div><label for="maxConcurrent">并发 state</label><input id="maxConcurrent" type="number" min="1" max="8" value="3" /></div>
+            <div><label for="maxReplans">重规划轮数</label><input id="maxReplans" type="number" min="0" max="5" value="2" /></div>
+          </div>
+          <button id="runButton">▶ 开始检索</button>
+          <button id="clearButton" class="secondary">↺ 清空</button>
+          <div style="height:18px"></div>
+          <div class="panel-head" style="padding:0 0 12px;border:0;min-height:0"><h2>本地环境</h2><button id="refreshEnv" class="ghost" style="width:auto;margin:0">↻ 刷新</button></div>
+          <div id="envList" class="env-list"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>FSM / State Graph</h2><span class="small" id="stateCount">0 states</span></div>
+        <div class="panel-body">
+          <div id="graph" class="graph"></div>
+          <div style="height:16px"></div>
+          <div class="panel-head" style="padding:0 0 12px;border:0;min-height:0"><h2>状态时间线</h2></div>
+          <div id="timeline" class="timeline"></div>
+        </div>
+      </section>
+
+      <section class="panel side-right">
+        <div class="panel-head"><h2>答案与证据</h2><span class="small" id="meta"></span></div>
+        <div class="panel-body">
+          <div id="answer" class="answer">等待运行</div>
+          <div style="height:16px"></div>
+          <div class="panel-head" style="padding:0 0 12px;border:0;min-height:0"><h2>检索来源</h2><span class="small" id="searchCount">0 searches</span></div>
+          <div id="evidence" class="source-list"></div>
+          <div style="height:16px"></div>
+          <pre id="debug">{}</pre>
+        </div>
+      </section>
+    </div>
+
+    <div id="evalView" class="hidden">
+      <div class="layout">
+        <section class="panel">
+          <div class="panel-head"><h2>Dataset</h2><span class="small" id="datasetCount">--</span></div>
+          <div class="panel-body">
+            <label for="datasetPath">文件</label>
+            <input id="datasetPath" value="/Users/marc/code_projects/tianchi_agent/test/data_with_answer.jsonl" />
+	            <div class="controls">
+	              <div><label for="evalStart">起始</label><input id="evalStart" type="number" min="0" value="0" /></div>
+	              <div><label for="evalLimit">数量</label><input id="evalLimit" type="number" min="1" max="200" value="200" /></div>
+	              <div><label for="evalConcurrency">state 并发</label><input id="evalConcurrency" type="number" min="1" max="8" value="3" /></div>
+	              <div><label for="evalReplans">重规划</label><input id="evalReplans" type="number" min="0" max="5" value="2" /></div>
+	            </div>
+	            <div style="height:10px"></div>
+	            <label for="evalCheckpointPath">断点文件</label>
+	            <input id="evalCheckpointPath" placeholder="留空则自动使用 data/eval_checkpoints" />
+	            <label class="check-row"><input id="evalResumeCheckpoint" type="checkbox" checked /> 恢复已完成题目</label>
+	            <label class="check-row"><input id="evalRerunIncorrect" type="checkbox" /> 只重测错误样本</label>
+	            <label class="check-row"><input id="evalResetCheckpoint" type="checkbox" /> 清空断点后重跑</label>
+	            <button id="evalButton">▶ 开始评测</button>
+            <button id="clearEvalButton" class="secondary">↺ 清空结果</button>
+          </div>
+        </section>
+
+	        <section class="panel">
+	          <div class="panel-head"><h2>正确率 / 每题过程</h2><span class="small" id="evalElapsed"></span></div>
+          <div class="panel-body">
+            <div class="metric-grid">
+              <div class="metric"><div class="value" id="metricDone">0</div><div class="name">Done</div></div>
+              <div class="metric"><div class="value ok" id="metricCorrect">0</div><div class="name">Correct</div></div>
+              <div class="metric"><div class="value bad" id="metricWrong">0</div><div class="name">Wrong</div></div>
+              <div class="metric"><div class="value cyan" id="metricAcc">0%</div><div class="name">Accuracy</div></div>
+            </div>
+            <div style="height:16px"></div>
+            <div id="evalRows" class="eval-list"></div>
+          </div>
+        </section>
+
+        <section class="panel side-right">
+          <div class="panel-head"><h2>评测事件</h2><span class="small">LLM-as-judge</span></div>
+          <div class="panel-body"><pre id="evalDebug">{}</pre></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script>
+	    const state = { states: new Map(), events: [], searches: 0, lastDebug: {} };
+	    const evalState = { done: 0, correct: 0, total: 0, startedAt: 0, items: new Map() };
+    const el = (id) => document.getElementById(id);
+
+    function setMode(mode) {
+      el("singleMode").classList.toggle("active", mode === "single");
+      el("evalMode").classList.toggle("active", mode === "eval");
+      el("singleView").classList.toggle("hidden", mode !== "single");
+      el("evalView").classList.toggle("hidden", mode !== "eval");
+    }
+    function setRunStatus(kind, text) {
+      el("runDot").className = "dot" + (kind === "running" ? " running" : kind === "done" ? " done" : kind === "failed" ? " failed" : "");
+      el("runStatus").textContent = text;
+    }
+    function resetView() {
+      state.states.clear(); state.events = []; state.searches = 0; state.lastDebug = {};
+      el("graph").innerHTML = ""; el("timeline").innerHTML = ""; el("evidence").innerHTML = "";
+      el("answer").textContent = "等待运行"; el("meta").textContent = ""; el("searchCount").textContent = "0 searches";
+      el("stateCount").textContent = "0 states"; el("debug").textContent = "{}"; setRunStatus("idle", "未运行");
+    }
+	    function resetEval() {
+	      evalState.done = 0; evalState.correct = 0; evalState.total = 0; evalState.startedAt = 0; evalState.items.clear();
+	      el("evalRows").innerHTML = ""; el("evalDebug").textContent = "{}"; el("evalElapsed").textContent = "";
+	      updateEvalMetrics();
+	      setRunStatus("idle", "未运行");
+	    }
+	    function updateEvalMetrics() {
+	      const wrong = Math.max(0, evalState.done - evalState.correct);
+	      const acc = evalState.done ? evalState.correct / evalState.done : 0;
+	      el("metricDone").textContent = String(evalState.done);
+	      el("metricCorrect").textContent = String(evalState.correct);
+	      el("metricWrong").textContent = String(wrong);
+	      el("metricAcc").textContent = `${Math.round(acc * 1000) / 10}%`;
+	    }
+	    function evalKey(payload) {
+	      return String(payload.id ?? payload.index ?? `row-${evalState.items.size + 1}`);
+	    }
+	    function ensureEvalItem(payload) {
+	      const key = evalKey(payload);
+	      if (evalState.items.has(key)) {
+	        const existing = evalState.items.get(key);
+	        if (payload.question && !existing.question) existing.question = payload.question;
+	        if (payload.index !== undefined) existing.index = payload.index;
+	        return existing;
+	      }
+	      const row = document.createElement("div");
+	      row.className = "eval-row running";
+	      const item = {
+	        key,
+	        id: payload.id,
+	        index: payload.index,
+	        question: payload.question || "",
+	        states: new Map(),
+	        path: [],
+	        sources: [],
+	        events: [],
+	        final: null,
+	        row,
+	      };
+	      evalState.items.set(key, item);
+	      el("evalRows").appendChild(row);
+	      renderEvalItem(item);
+	      return item;
+	    }
+	    function renderEvalItem(item) {
+	      const final = item.final || {};
+	      const judgement = final.judgement || (final.error ? "error" : "running");
+	      item.row.className = `eval-row ${judgement}`;
+	      const resumed = final.resumed ? " · resumed" : "";
+	      const title = `#${escapeHtml(item.index ?? item.id ?? item.key)} · ${escapeHtml(judgement)}${resumed}`;
+	      const reason = final.reason || final.error || "运行中";
+	      const states = Array.from(item.states.values());
+	      const graphHtml = states.length
+	        ? states.map(node => `<div class="mini-node ${escapeAttr(node.status || "pending")}"><div class="id">${escapeHtml(node.state_id || "")} · ${escapeHtml(node.status || "pending")}</div><div>${escapeHtml(node.description || "")}</div></div>`).join("")
+	        : `<div class="small">等待 state 事件</div>`;
+	      const sourcesHtml = item.sources.length
+	        ? item.sources.slice(-12).reverse().map(source => `<div class="eval-source"><strong>${escapeHtml(source.title || source.source || source.tool || "source")}</strong><div class="small">${escapeHtml(source.snippet || source.query || "")}</div>${source.url ? `<a href="${escapeAttr(source.url)}" target="_blank" rel="noreferrer">${escapeHtml(source.url)}</a>` : ""}${source.error ? `<div class="bad">${escapeHtml(source.error)}</div>` : ""}</div>`).join("")
+	        : `<div class="small">暂无检索来源</div>`;
+	      const qaHtml = item.final
+	        ? `<div class="qa"><div><div class="small">Gold</div><strong>${escapeHtml(final.gold_answer || "")}</strong></div><div><div class="small">Prediction</div><strong>${escapeHtml(final.predicted_answer || "")}</strong></div></div>`
+	        : "";
+	      item.row.innerHTML = `<div><strong>${title}</strong><span class="small"> · ${escapeHtml(reason)}</span></div><div class="small">${escapeHtml(item.question || "")}</div><div class="eval-process"><div><div class="small">状态路径</div><div class="path">${escapeHtml(item.path.join(" → ") || "等待状态更新")}</div></div><div><div class="small">State Graph</div><div class="mini-graph">${graphHtml}</div></div><div><div class="small">检索来源 / 工具结果</div><div class="eval-sources">${sourcesHtml}</div></div></div>${qaHtml}`;
+	    }
+	    function collectEvalSources(item, result) {
+	      const calls = result.tool_calls || [];
+	      for (const call of calls) {
+	        const results = call.results || [];
+	        if (!results.length) {
+	          item.sources.push({ tool: call.tool || "search", query: call.query || "", error: call.error || "" });
+	          continue;
+	        }
+	        for (const source of results) {
+	          item.sources.push({ ...source, tool: call.tool, query: call.query });
+	        }
+	      }
+	    }
+	    function handleEvalRunEvent(payload) {
+	      const item = ensureEvalItem(payload);
+	      item.events.push(payload);
+	      const inner = payload.inner_event || "Event";
+	      const data = payload.payload || {};
+	      if (inner === "State" && data.state) {
+	        item.path.push(data.state);
+	      } else if (inner === "Plan") {
+	        for (const node of data.states || []) item.states.set(node.state_id, node);
+	        item.path.push(`PLAN(${(data.states || []).length})`);
+	      } else if (inner === "Dispatch") {
+	        item.path.push(`DISPATCH(${(data.ready_states || []).length})`);
+	      } else if (inner === "TaskStart") {
+	        const node = data.state || {};
+	        node.status = "running";
+	        item.states.set(node.state_id, node);
+	        item.path.push(`START:${node.state_id || ""}`);
+	      } else if (inner === "TaskResult") {
+	        const node = item.states.get(data.state_id) || { state_id: data.state_id };
+	        node.status = data.status || (data.result || {}).status || "success";
+	        item.states.set(node.state_id, node);
+	        collectEvalSources(item, data.result || {});
+	        item.path.push(`RESULT:${data.state_id || ""}:${node.status}`);
+	      } else if (inner === "Coverage") {
+	        const coverage = data.coverage || {};
+	        item.path.push(coverage.complete ? "COVERAGE:complete" : "COVERAGE:missing");
+	      } else if (inner === "Final") {
+	        item.path.push("FINAL");
+	      }
+	      if (item.path.length > 28) item.path = item.path.slice(-28);
+	      renderEvalItem(item);
+	    }
+    function addTimeline(name, detail) {
+      const item = document.createElement("div");
+      item.className = "event";
+      item.innerHTML = `<strong>${escapeHtml(name)}</strong><div><div class="id">${new Date().toLocaleTimeString()}</div>${escapeHtml(detail)}</div>`;
+      el("timeline").prepend(item);
+    }
+    function updateGraph() {
+      const graph = el("graph"); graph.innerHTML = "";
+      for (const node of state.states.values()) {
+        const item = document.createElement("div");
+        const status = node.status || "pending";
+        item.className = `node ${status}`;
+        const tags = [...(node.coverage_tags || []), node.state_type || ""].filter(Boolean);
+        item.innerHTML = `<div class="id">${escapeHtml(node.state_id || "")} · ${escapeHtml(status)}</div><div class="desc">${escapeHtml(node.description || "")}</div><div class="tags">${tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>`;
+        graph.appendChild(item);
+      }
+      el("stateCount").textContent = `${state.states.size} states`;
+    }
+    function addEvidence(result) {
+      const calls = result.tool_calls || [];
+      state.searches += calls.length;
+      el("searchCount").textContent = `${state.searches} searches`;
+      for (const call of calls) {
+        for (const source of (call.results || [])) {
+          const row = document.createElement("div");
+          row.className = "source";
+          const url = source.url || "";
+          row.innerHTML = `<strong>${escapeHtml(source.title || source.source || call.tool || "source")}</strong><div class="small">${escapeHtml(source.snippet || call.query || "")}</div>${url ? `<a href="${escapeAttr(url)}" target="_blank" rel="noreferrer">${escapeHtml(url)}</a>` : ""}`;
+          el("evidence").prepend(row);
+        }
+      }
+      if (result.candidate_answer) addTimeline("Candidate", result.candidate_answer);
+    }
+    function handleRunEvent(eventName, payload) {
+      el("debug").textContent = JSON.stringify(payload, null, 2);
+      if (eventName === "State") {
+        addTimeline("FSM", payload.state || "");
+        if (payload.state === "DONE") setRunStatus("done", "完成");
+        if (payload.state === "FAILED") setRunStatus("failed", "失败");
+      } else if (eventName === "Plan") {
+        for (const node of payload.states || []) state.states.set(node.state_id, node);
+        updateGraph(); addTimeline("Plan", `生成 ${state.states.size} 个 states`);
+      } else if (eventName === "Dispatch") {
+        addTimeline("Dispatch", `${(payload.ready_states || []).length} 个 state`);
+      } else if (eventName === "TaskStart") {
+        const node = payload.state || {}; node.status = "running"; state.states.set(node.state_id, node); updateGraph(); addTimeline("TaskStart", node.state_id || "");
+      } else if (eventName === "TaskResult") {
+        const node = state.states.get(payload.state_id) || { state_id: payload.state_id };
+        node.status = payload.status || (payload.result || {}).status || "success"; state.states.set(node.state_id, node); updateGraph(); addEvidence(payload.result || {}); addTimeline("TaskResult", `${payload.state_id}: ${node.status}`);
+      } else if (eventName === "Coverage") {
+        const coverage = payload.coverage || {}; addTimeline("Coverage", coverage.complete ? "complete" : `missing: ${(coverage.missing || []).join(", ")}`);
+      } else if (eventName === "Replan") {
+        addTimeline("Replan", `round ${payload.round || ""}`); for (const node of payload.states || []) state.states.set(node.state_id, node); updateGraph();
+      } else if (eventName === "Final" || eventName === "Message") {
+        el("answer").textContent = payload.answer || "";
+        const meta = payload.metadata || {}; el("meta").textContent = meta.elapsed_seconds ? `${meta.elapsed_seconds}s` : "";
+        setRunStatus("done", "完成");
+      }
+    }
+    function handleEvalEvent(eventName, payload) {
+      el("evalDebug").textContent = JSON.stringify(payload, null, 2);
+	      if (eventName === "EvalStart") {
+	        evalState.total = payload.total || 0; evalState.startedAt = Date.now();
+	        setRunStatus("running", `评测中 0/${evalState.total}`);
+	        if (payload.checkpoint_path) el("evalCheckpointPath").value = payload.checkpoint_path;
+	      } else if (eventName === "EvalCheckpoint") {
+	        const loaded = payload.loaded || 0;
+	        setRunStatus("running", loaded ? `已加载 ${loaded} 条断点` : "未发现可恢复断点");
+	      } else if (eventName === "EvalRunEvent") {
+	        handleEvalRunEvent(payload);
+	      } else if (eventName === "EvalItem") {
+	        evalState.done = payload.done ?? evalState.done + 1;
+	        evalState.correct = payload.correct ?? evalState.correct;
+	        updateEvalMetrics();
+	        setRunStatus("running", `评测中 ${evalState.done}/${evalState.total}`);
+	        const item = ensureEvalItem(payload);
+	        item.final = payload;
+	        renderEvalItem(item);
+	      } else if (eventName === "EvalSummary") {
+	        evalState.done = payload.done ?? payload.total ?? evalState.done; evalState.correct = payload.correct ?? evalState.correct; updateEvalMetrics();
+	        el("evalElapsed").textContent = payload.elapsed_seconds ? `${payload.elapsed_seconds}s` : "";
+	        setRunStatus("done", `评测完成 · ${Math.round((payload.accuracy || 0) * 1000) / 10}%`);
+	      } else if (eventName === "EvalError") {
+	        setRunStatus("failed", "评测中断，已保留断点");
+	      }
+    }
+    async function runResearch() {
+      resetView(); setRunStatus("running", "运行中"); el("runButton").disabled = true;
+      const body = { question: el("question").value.trim(), max_concurrent: Number(el("maxConcurrent").value || 3), max_replans: Number(el("maxReplans").value || 2), max_adversarial_rounds: 1 };
+      try { await consumeSse("/stream", body, handleRunEvent); } catch (error) { setRunStatus("failed", "失败"); addTimeline("Error", String(error)); } finally { el("runButton").disabled = false; }
+    }
+    async function runEvaluation() {
+      resetEval(); setRunStatus("running", "评测中"); el("evalButton").disabled = true;
+	      const checkpointPath = el("evalCheckpointPath").value.trim();
+	      const body = { dataset_path: el("datasetPath").value.trim(), start: Number(el("evalStart").value || 0), limit: Number(el("evalLimit").value || 200), max_concurrent: Number(el("evalConcurrency").value || 3), max_replans: Number(el("evalReplans").value || 2), max_adversarial_rounds: 0, resume_from_checkpoint: el("evalResumeCheckpoint").checked, rerun_incorrect_checkpoint_items: el("evalRerunIncorrect").checked, reset_checkpoint: el("evalResetCheckpoint").checked };
+	      if (checkpointPath) body.checkpoint_path = checkpointPath;
+      try { await consumeSse("/evaluate-stream", body, handleEvalEvent); } catch (error) { setRunStatus("failed", "评测失败"); el("evalDebug").textContent = String(error); } finally { el("evalButton").disabled = false; }
+    }
+    async function consumeSse(url, body, handler) {
+      const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "text/event-stream" }, body: JSON.stringify(body) });
+      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+      const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read(); if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n"); buffer = frames.pop() || "";
+        for (const frame of frames) {
+          if (!frame.trim() || frame.startsWith(":")) continue;
+          let name = "Message"; let data = "";
+          for (const line of frame.split("\n")) {
+            if (line.startsWith("event:")) name = line.slice(6).trim();
+            if (line.startsWith("data:")) data += line.slice(5).trim();
+          }
+          if (data) handler(name, JSON.parse(data));
+        }
+      }
+    }
+    async function loadEnvStatus() {
+      const list = el("envList"); list.innerHTML = "";
+      try {
+        const response = await fetch("/env-status"); const data = await response.json();
+        el("runCommand").textContent = data.run_command || "";
+        for (const group of (data.env.groups || [])) {
+          const row = document.createElement("div"); row.className = "env-row";
+          row.innerHTML = `<span>${escapeHtml(group.name)}</span><strong class="${group.configured ? "ok" : group.required ? "bad" : "warn"}">${group.configured ? "已配置" : group.required ? "缺失" : "可选"}</strong>`;
+          list.appendChild(row);
+        }
+      } catch (error) {
+        list.innerHTML = `<div class="env-row"><span>环境诊断</span><strong class="bad">${escapeHtml(String(error))}</strong></div>`;
+      }
+    }
+    async function loadDatasetInfo() {
+      try {
+        const response = await fetch(`/dataset-info?path=${encodeURIComponent(el("datasetPath").value.trim())}`);
+        const data = await response.json();
+        el("datasetCount").textContent = `${data.count} rows`;
+      } catch { el("datasetCount").textContent = "--"; }
+    }
+    function escapeHtml(value) { return String(value ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch])); }
+    function escapeAttr(value) { return escapeHtml(value).replace(/`/g, "&#096;"); }
+
+    el("singleMode").addEventListener("click", () => setMode("single"));
+    el("evalMode").addEventListener("click", () => setMode("eval"));
+    el("runButton").addEventListener("click", runResearch);
+    el("clearButton").addEventListener("click", resetView);
+    el("evalButton").addEventListener("click", runEvaluation);
+    el("clearEvalButton").addEventListener("click", resetEval);
+    el("refreshEnv").addEventListener("click", loadEnvStatus);
+    el("datasetPath").addEventListener("change", loadDatasetInfo);
+    resetView(); resetEval(); loadEnvStatus(); loadDatasetInfo();
+  </script>
+</body>
+</html>
