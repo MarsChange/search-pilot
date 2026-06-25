@@ -381,6 +381,7 @@
 	            <label for="evalCheckpointPath">断点文件</label>
 	            <input id="evalCheckpointPath" placeholder="留空则自动使用 data/eval_checkpoints" />
 	            <label class="check-row"><input id="evalResumeCheckpoint" type="checkbox" checked /> 恢复已完成题目</label>
+	            <label class="check-row"><input id="evalRerunIncorrect" type="checkbox" /> 只重测错误样本</label>
 	            <label class="check-row"><input id="evalResetCheckpoint" type="checkbox" /> 清空断点后重跑</label>
 	            <button id="evalButton">▶ 开始评测</button>
             <button id="clearEvalButton" class="secondary">↺ 清空结果</button>
@@ -632,7 +633,7 @@
     async function runEvaluation() {
       resetEval(); setRunStatus("running", "评测中"); el("evalButton").disabled = true;
 	      const checkpointPath = el("evalCheckpointPath").value.trim();
-	      const body = { dataset_path: el("datasetPath").value.trim(), start: Number(el("evalStart").value || 0), limit: Number(el("evalLimit").value || 200), max_concurrent: Number(el("evalConcurrency").value || 3), max_replans: Number(el("evalReplans").value || 2), max_adversarial_rounds: 0, resume_from_checkpoint: el("evalResumeCheckpoint").checked, reset_checkpoint: el("evalResetCheckpoint").checked };
+	      const body = { dataset_path: el("datasetPath").value.trim(), start: Number(el("evalStart").value || 0), limit: Number(el("evalLimit").value || 200), max_concurrent: Number(el("evalConcurrency").value || 3), max_replans: Number(el("evalReplans").value || 2), max_adversarial_rounds: 0, resume_from_checkpoint: el("evalResumeCheckpoint").checked, rerun_incorrect_checkpoint_items: el("evalRerunIncorrect").checked, reset_checkpoint: el("evalResetCheckpoint").checked };
 	      if (checkpointPath) body.checkpoint_path = checkpointPath;
       try { await consumeSse("/evaluate-stream", body, handleEvalEvent); } catch (error) { setRunStatus("failed", "评测失败"); el("evalDebug").textContent = String(error); } finally { el("evalButton").disabled = false; }
     }

@@ -76,6 +76,7 @@ class EvaluationRequest(BaseModel):
     checkpoint_path: str | None = None
     resume_from_checkpoint: bool = True
     reset_checkpoint: bool = False
+    rerun_incorrect_checkpoint_items: bool = False
 
 
 def _build_runner(req: QueryRequest, event_sink=None) -> DeepResearchRunner:
@@ -253,6 +254,7 @@ async def _stream_evaluation(req: EvaluationRequest):
             "limit": req.limit,
             "checkpoint_path": str(checkpoint_path),
             "resume_from_checkpoint": req.resume_from_checkpoint,
+            "rerun_incorrect_checkpoint_items": req.rerun_incorrect_checkpoint_items,
             "checkpoint_records": len(checkpoint),
         }
     )
@@ -263,6 +265,7 @@ async def _stream_evaluation(req: EvaluationRequest):
             "loaded": len(checkpoint),
             "resume_from_checkpoint": req.resume_from_checkpoint,
             "reset_checkpoint": req.reset_checkpoint,
+            "rerun_incorrect_checkpoint_items": req.rerun_incorrect_checkpoint_items,
         }
     )
     emit_runtime_log(
@@ -271,6 +274,7 @@ async def _stream_evaluation(req: EvaluationRequest):
         loaded=len(checkpoint),
         resume_from_checkpoint=req.resume_from_checkpoint,
         reset_checkpoint=req.reset_checkpoint,
+        rerun_incorrect_checkpoint_items=req.rerun_incorrect_checkpoint_items,
     )
 
     for offset, row in enumerate(rows, 1):
@@ -280,7 +284,8 @@ async def _stream_evaluation(req: EvaluationRequest):
         gold = str(row.get("answer", ""))
         row_key = _eval_row_key(dataset_path, item_index, row)
         saved = checkpoint.get(row_key)
-        if saved:
+        rerun_saved = bool(saved and req.rerun_incorrect_checkpoint_items and not saved.get("item_correct"))
+        if saved and not rerun_saved:
             done_count += 1
             saved_item = dict(saved.get("item", {}))
             if saved.get("item_correct"):
@@ -301,6 +306,14 @@ async def _stream_evaluation(req: EvaluationRequest):
             yield _sse(saved_item)
             emit_runtime_log("eval_checkpoint_skip", checkpoint_path=str(checkpoint_path), row_key=row_key, index=item_index)
             continue
+        if rerun_saved:
+            emit_runtime_log(
+                "eval_checkpoint_rerun",
+                checkpoint_path=str(checkpoint_path),
+                row_key=row_key,
+                index=item_index,
+                previous_judgement=(saved.get("item") or {}).get("judgement"),
+            )
         try:
             runner_req = QueryRequest(
                 question=question,
@@ -376,6 +389,8 @@ async def _stream_evaluation(req: EvaluationRequest):
                 "accuracy": correct / done_count if done_count else 0.0,
                 "metadata": metadata,
                 "resumed": False,
+                "checkpoint_rerun": rerun_saved,
+                "previous_judgement": (saved.get("item") or {}).get("judgement") if rerun_saved else None,
                 "checkpoint_path": str(checkpoint_path),
             }
             _append_eval_checkpoint(
