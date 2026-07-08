@@ -15,8 +15,8 @@
 ---
 
 ## Update on 2026.6.25
-在原来比赛的基础智商进行重构，不依赖 LangChain/LangGraph 而是重构了一套基于 FSM 驱动的 dynamic state graph 调度并发范式，由原来的全局记忆账本改为 SQLite + numpy 向量索引的共享记忆存储，并添加上下文压缩机制，缓解原先框架上下文长度爆炸的问题。同时引入 LLM-as-judge的评测脚本，使用天池大赛复赛 100 道赛题，实现了64%的 Deep Research正确率。
 
+在原来比赛的基础之上进行重构，不依赖 LangChain/LangGraph 而是重构了一套基于 FSM 驱动的 dynamic state graph 调度并发范式，由原来的全局记忆账本改为 SQLite + numpy 向量索引的共享记忆存储，并添加上下文压缩机制，缓解原先框架上下文长度爆炸的问题。同时引入 LLM-as-judge的评测脚本，使用天池大赛复赛 100 道赛题，实现了64%的 Deep Research正确率。
 
 ## Overview
 
@@ -150,20 +150,20 @@ data/eval_checkpoints/eval_memory/<row_key>.db
 
 流式接口会通过 SSE 输出研究过程事件：
 
-| Event | 含义 |
-| --- | --- |
-| `State` | FSM 状态切换 |
-| `Plan` | 初始研究计划和状态列表 |
-| `Dispatch` | 本轮可并发执行的 ready states |
-| `TaskStart` | 单个 state 开始 |
-| `TaskResult` | 单个 state 完成、失败或部分完成 |
-| `Coverage` | 覆盖检查结果 |
-| `Replan` | 重规划开始和结果 |
-| `Final` | 最终答案和元数据 |
-| `EvalRunEvent` | 评测时包装的单题内部研究事件 |
-| `EvalItem` | 单题评测结果 |
-| `EvalSummary` | 整轮评测汇总 |
-| `EvalError` | 评测中断错误 |
+| Event            | 含义                            |
+| ---------------- | ------------------------------- |
+| `State`        | FSM 状态切换                    |
+| `Plan`         | 初始研究计划和状态列表          |
+| `Dispatch`     | 本轮可并发执行的 ready states   |
+| `TaskStart`    | 单个 state 开始                 |
+| `TaskResult`   | 单个 state 完成、失败或部分完成 |
+| `Coverage`     | 覆盖检查结果                    |
+| `Replan`       | 重规划开始和结果                |
+| `Final`        | 最终答案和元数据                |
+| `EvalRunEvent` | 评测时包装的单题内部研究事件    |
+| `EvalItem`     | 单题评测结果                    |
+| `EvalSummary`  | 整轮评测汇总                    |
+| `EvalError`    | 评测中断错误                    |
 
 <h2 id="quickstart">Quick Start</h2>
 
@@ -220,21 +220,21 @@ kill -9 <PID>
 
 <h2 id="configuration">Configuration</h2>
 
-| 环境变量 | 必需 | 说明 |
-| --- | --- | --- |
-| `DASHSCOPE_API_KEY` | 是 | LLM 调用 Key |
-| `QWEN_MODEL` | 否 | 默认 `qwen-max` |
-| `DEEP_RESEARCH_MEMORY_DB` | 否 | 普通问答的 SQLite 记忆库路径 |
-| `SERPER_API_KEYS` | 否 | Serper Key 池，支持逗号或换行分隔 |
-| `SERPER_API_KEY` | 否 | 单个 Serper Key |
-| `IQS_API_KEY` | 否 | 可选搜索服务 Key |
-| `JINA_API_KEY` | 否 | Jina Reader，用于网页解析和降级 |
-| `JINA_READER_URL` | 否 | 默认 `https://r.jina.ai` |
-| `E2B_API_KEY` | 否 | E2B Python 沙箱 |
-| `PLAYWRIGHT_MCP_URL` | 否 | Playwright MCP 服务地址 |
-| `PLAYWRIGHT_MCP_TOKEN` | 否 | Playwright MCP Token |
-| `SUB_AGENT_NUM` | 否 | 兼容旧配置，当前主要使用请求里的 `max_concurrent` |
-| `TIANCHI_AGENT_LOG_FILE` | 否 | runtime JSONL 日志路径，默认 `logs/agent_runtime.jsonl` |
+| 环境变量                    | 必需 | 说明                                                     |
+| --------------------------- | ---- | -------------------------------------------------------- |
+| `DASHSCOPE_API_KEY`       | 是   | LLM 调用 Key                                             |
+| `QWEN_MODEL`              | 否   | 默认`qwen-max`                                         |
+| `DEEP_RESEARCH_MEMORY_DB` | 否   | 普通问答的 SQLite 记忆库路径                             |
+| `SERPER_API_KEYS`         | 否   | Serper Key 池，支持逗号或换行分隔                        |
+| `SERPER_API_KEY`          | 否   | 单个 Serper Key                                          |
+| `IQS_API_KEY`             | 否   | 可选搜索服务 Key                                         |
+| `JINA_API_KEY`            | 否   | Jina Reader，用于网页解析和降级                          |
+| `JINA_READER_URL`         | 否   | 默认`https://r.jina.ai`                                |
+| `E2B_API_KEY`             | 否   | E2B Python 沙箱                                          |
+| `PLAYWRIGHT_MCP_URL`      | 否   | Playwright MCP 服务地址                                  |
+| `PLAYWRIGHT_MCP_TOKEN`    | 否   | Playwright MCP Token                                     |
+| `SUB_AGENT_NUM`           | 否   | 兼容旧配置，当前主要使用请求里的`max_concurrent`       |
+| `TIANCHI_AGENT_LOG_FILE`  | 否   | runtime JSONL 日志路径，默认`logs/agent_runtime.jsonl` |
 
 工具按环境变量条件加载。没有配置对应 Key 时，相关工具不会注册，worker 会根据可用工具降级执行。
 
@@ -357,16 +357,16 @@ http://127.0.0.1:8000/visualize
 
 默认工具由 `tools/__init__.py` 根据环境变量导入，并通过 `FunctionToolExecutor` 统一执行。
 
-| 工具 | 用途 |
-| --- | --- |
-| `search_engine` | Google/Serper 搜索 |
-| `search_wikipedia` | Wikipedia 当前页面检索 |
-| `search_wikipedia_revision` | Wikipedia 历史版本检索 |
-| `list_wikipedia_revisions` | Wikipedia 修订历史 |
-| `scrape_website` | 网页解析，Jina Reader 优先，失败后 requests + MarkItDown |
-| `analyze_webpage` | 解析网页后用 LLM 针对问题抽取证据 |
-| `code_sandbox` | E2B Python 沙箱 |
-| `browser_session` | Playwright MCP 浏览器自动化 |
+| 工具                          | 用途                                                     |
+| ----------------------------- | -------------------------------------------------------- |
+| `search_engine`             | Google/Serper 搜索                                       |
+| `search_wikipedia`          | Wikipedia 当前页面检索                                   |
+| `search_wikipedia_revision` | Wikipedia 历史版本检索                                   |
+| `list_wikipedia_revisions`  | Wikipedia 修订历史                                       |
+| `scrape_website`            | 网页解析，Jina Reader 优先，失败后 requests + MarkItDown |
+| `analyze_webpage`           | 解析网页后用 LLM 针对问题抽取证据                        |
+| `code_sandbox`              | E2B Python 沙箱                                          |
+| `browser_session`           | Playwright MCP 浏览器自动化                              |
 
 工具调用会被包裹为 30 秒超时，并写入 runtime log。网页解析中的 Jina 失败会自动尝试 requests 降级；如果两条链路都失败，会记录 `webpage_parse_error`。
 
