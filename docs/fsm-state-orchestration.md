@@ -6,10 +6,11 @@
 
 ### 外层 FSMState
 
-`FSMState` 是 runner 级别的流程阶段，定义在 `schemas.py`：
+`FSMState` 是 runner 级别的流程阶段，定义在 `schemas.py`。当前 enum 一共有 11 个状态：
 
 | 状态 | 触发位置 | 说明 |
 | --- | --- | --- |
+| `IDLE` | 定义态，当前 runner 未主动发出该 transition | 表示尚未进入研究流程的空闲状态，保留给初始化、可视化或未来运行控制使用。 |
 | `PLANNING` | `run()` 开始后 | 读取长期记忆，调用 planner 生成 `ResearchPlan`。 |
 | `DISPATCHING` | 每轮循环开始 | 从状态图中取出依赖已满足的 pending states。 |
 | `COLLECTING` | worker batch 完成后 | 将 worker evidence 写入共享记忆库。 |
@@ -21,7 +22,7 @@
 | `DONE` | 正常完成 | 返回 `DeepResearchResult`。 |
 | `FAILED` | 捕获异常 | 返回失败报告和已收集 evidence。 |
 
-每次 `_transition()` 都会追加 `StateHistoryEvent`，并通过 `event_sink` 发出 `{"type": "state", ...}`。
+每次 `_transition()` 都会追加 `StateHistoryEvent`，并通过 `event_sink` 发出 `{"type": "state", ...}`。需要注意的是，`IDLE` 目前只在 enum 中定义，`DeepResearchRunner.run()` 的实际事件流从 `PLANNING` 开始。
 
 ### 内层 ResearchStateGraph
 
